@@ -23,7 +23,7 @@ TARGET_AMOUNT_COL_LOWER = 'paymentamount'
 # TARGET_TIMESTAMP_COL_LOWER = 'processedtimestamp' # Defined but not strictly needed here
 
 # --- CONSTANT FOR SOURCE SHEET TAB NAME ---
-SOURCE_SHEET_TAB_NAME = "Payments Received" # Use the correct tab name
+SOURCE_SHEET_TAB_NAME = "Payments" # Use the correct tab name
 
 def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_all=False, fetch_recent_days=None):
     """
