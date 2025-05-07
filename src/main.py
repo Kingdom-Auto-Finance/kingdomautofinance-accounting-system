@@ -3,95 +3,74 @@ import argparse
 import logging
 import os
 import sys
-# --- Corrected Imports - Ensure Flask is imported only if used ---
-# from flask import Flask, request # Import Flask only if creating the 'app' object for HTTP trigger
 
 # --- Path setup ---
-# This setup helps Python find modules correctly when run using 'python -m src.main ...'
+# Ensures correct relative imports when run as a module
 current_script_path = os.path.abspath(__file__)
 src_directory = os.path.dirname(current_script_path)
 project_root = os.path.dirname(src_directory)
-# You might uncomment the below if running directly ('python src/main.py') causes issues,
-# but using 'python -m ...' is generally preferred for packages.
+# Adding project root might be needed if imports use 'src.' prefix explicitly somewhere else
 # if project_root not in sys.path:
 #      sys.path.insert(0, project_root)
 
 # --- Import project modules using relative imports ---
 try:
-    from . import config # Assuming config.py is in the same directory (src)
-    from .payment_processor import process_payments
-    from .reporting import generate_period_report
-    from .daily_summary_reporter import generate_and_update_daily_summary
+    # Assuming execution via 'python -m src.main ...'
+    from . import config # Imports config.py from src folder
+    from .payment_processor import process_payments # Imports from src/payment_processor.py
+    from .reporting import generate_period_report # Imports from src/reporting.py
+    from .daily_summary_reporter import generate_and_update_daily_summary # Imports from src/daily_summary_reporter.py
 except ImportError as e:
-     # Provide a more helpful error message if imports fail
+     # Provides guidance if imports fail
      print(f"Import Error: {e}. Failed to import modules from within the 'src' package.")
      print("Please ensure you are running this script as a module from the project's root directory using:")
      print("  python -m src.main [command]")
      print(f"Current sys.path: {sys.path}")
-     sys.exit(1)
+     sys.exit(1) # Exit if essential modules cannot be imported
 
 
 # --- Logging Setup ---
-# Ensure log directory exists before setting up file handler
+# Ensures log directory exists and sets up logging handlers
 if not os.path.exists(config.LOG_DIR):
     try:
-        os.makedirs(config.LOG_DIR)
+        os.makedirs(config.LOG_DIR, exist_ok=True) # Use exist_ok=True
+        # Optionally create .gitignore in logs directory
+        gitignore_path = os.path.join(config.LOG_DIR, ".gitignore")
+        if not os.path.exists(gitignore_path):
+            try:
+                 with open(gitignore_path, "w") as f: f.write("*\n!.gitignore\n")
+            except IOError:
+                 print(f"Warning: Could not create .gitignore in {config.LOG_DIR}")
     except OSError as e:
         print(f"Warning: Could not create log directory {config.LOG_DIR}: {e}")
-        # Fallback to logging only to console if directory creation fails
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - [%(module)s.%(funcName)s:%(lineno)d] - %(message)s",
-            handlers=[logging.StreamHandler(sys.stdout)]
-        )
-        print("Logging to file disabled due to directory error.")
+        # Basic console logging as fallback
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
+        print("Logging to file disabled.")
 else:
-    # Setup logging to both file and console if directory exists
+    # Setup logging to both file and console
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.INFO, 
         format="%(asctime)s - %(levelname)s - [%(module)s.%(funcName)s:%(lineno)d] - %(message)s",
         handlers=[
-            logging.FileHandler(config.LOG_FILE), # Log to a file
-            logging.StreamHandler(sys.stdout)      # Log to console (stdout for GCF)
-        ]
+            logging.FileHandler(config.LOG_FILE, encoding='utf-8'), # Specify encoding
+            logging.StreamHandler(sys.stdout)      
+        ],
+        # Force=True might be needed if logging is configured elsewhere first (e.g., GCF default)
+        # force=True 
     )
-# Get a logger for this module
+# Get a logger specifically for this main module
 module_logger = logging.getLogger(__name__)
 
 
-# --- Flask App & HTTP Endpoint (OPTIONAL - uncomment/define if deploying as HTTP GCF) ---
-# If you are using Google Cloud Scheduler with an HTTP target for automation,
-# you would define your Flask app and HTTP endpoint function here.
-# If you are only using the CLI or OS-level scheduling, you don't need this Flask part.
-
-# Example structure (uncomment and adapt if needed):
-# app = Flask(__name__) # Initialize Flask app
-#
-# @app.route('/run-daily-summary', methods=['POST']) # Example route for daily summary
-# def http_trigger_daily_summary():
-#     module_logger.info("HTTP Trigger received for daily summary.")
-#     # Add security checks if needed (e.g., check headers, tokens)
-#     try:
-#         success = generate_and_update_daily_summary()
-#         if success:
-#             return "Daily summary updated successfully.", 200
-#         else:
-#             return "Daily summary failed.", 500
-#     except Exception as e:
-#         module_logger.error(f"Error in HTTP triggered daily summary: {e}", exc_info=True)
-#         return f"Internal Server Error: {e}", 500
-#
-# @app.route('/run-process-payments', methods=['POST']) # Example route for payment processing
-# def http_trigger_process_payments():
-#     module_logger.info("HTTP Trigger received for payment processing.")
-#     try:
-#         process_payments() # Doesn't return True/False, check logs for success
-#         return "Payment processing triggered successfully.", 200
-#     except Exception as e:
-#         module_logger.error(f"Error in HTTP triggered payment processing: {e}", exc_info=True)
-#         return f"Internal Server Error: {e}", 500
-#
-# # If using Flask, the Cloud Function Entry Point would be 'app'
+# --- Optional Flask App & HTTP Endpoint ---
+# Kept commented out as per previous instruction (only needed for HTTP GCF trigger)
+# from flask import Flask, request 
+# app = Flask(__name__) 
+# @app.route('/run-daily-summary', methods=['POST']) 
+# def http_trigger_daily_summary(): ...
+# @app.route('/run-process-payments', methods=['POST']) 
+# def http_trigger_process_payments(): ...
+# # Cloud Function Entry Point would be 'app' if using Flask
 
 
 # --- Command-Line Interface (CLI) Definition ---
@@ -100,12 +79,13 @@ def cli_main():
     module_logger.info("Kingdom Auto Finance system starting via CLI.")
     parser = argparse.ArgumentParser(
         description="Kingdom Auto Finance Processing System",
-        formatter_class=argparse.RawTextHelpFormatter # Allows better formatting in help
+        formatter_class=argparse.RawTextHelpFormatter 
     )
+    # Make sure subparsers destination is set and required
     subparsers = parser.add_subparsers(
         dest="command",
-        help="Available commands",
-        required=True # Ensures a command must be provided
+        help="Available commands:",
+        required=True 
     )
 
     # --- Process payments command ---
@@ -113,7 +93,8 @@ def cli_main():
         "process",
         help="Process new payments from the Google Sheet Log."
     )
-    parser_process.set_defaults(func=lambda args_ns: process_payments()) # Link command to function
+    # Link the command 'process' to the process_payments function
+    parser_process.set_defaults(func=process_payments) # No lambda needed if function takes no args
 
     # --- Generate period report command ---
     parser_report = subparsers.add_parser(
@@ -122,57 +103,75 @@ def cli_main():
     )
     parser_report.add_argument(
         "start_date",
+        metavar='YYYY-MM-DD', # Add metavar for clarity in help
+        type=str, # Keep as string, validation happens in function
         help="Report start date (YYYY-MM-DD)"
     )
     parser_report.add_argument(
         "end_date",
+        metavar='YYYY-MM-DD',
+        type=str,
         help="Report end date (YYYY-MM-DD)"
     )
+    # Link command 'report' to generate_period_report, passing the args object
     parser_report.set_defaults(
         func=lambda args_ns: generate_period_report(args_ns.start_date, args_ns.end_date)
     )
     
     # --- Generate daily summary report command ---
-    # Uses consistent 4-space indentation
+    # Consistent 4-space indentation verified
     parser_daily = subparsers.add_parser(
         "daily_summary",
-        help="Generate and update the daily financial summary report sheet."
+        help="Generate/update daily summary sheet. Overwrites sheet. Use --since to limit history."
     )
+    parser_daily.add_argument(
+        "--since",
+        metavar='YYYY-MM-DD',
+        type=str,
+        default=None, # Default processes all history
+        help="Optional: Rebuild summary only for dates ON or AFTER this date."
+    )
+    # Link command 'daily_summary' to generate_and_update_daily_summary, passing args
     parser_daily.set_defaults(
-        func=lambda args_ns: generate_and_update_daily_summary()
+        func=lambda args_ns: generate_and_update_daily_summary(since_date_str=args_ns.since) 
     )
     
     # --- Parse arguments ---
-    try:
+    try: 
         args = parser.parse_args()
+        module_logger.debug(f"Parsed arguments: {args}")
     except SystemExit: 
-        # Handle cases where --help is used or no command provided
-        # parser.print_help() # argparse already does this
-        sys.exit(0) # Exit cleanly after help
+        # Raised by argparse on --help or error, exit cleanly
+        sys.exit(0) 
+    except Exception as e:
+        module_logger.error(f"Error parsing arguments: {e}")
+        parser.print_help()
+        sys.exit(1)
 
     # --- Execute the selected command's function ---
-    if hasattr(args, 'func'):
+    # Check if the parsed args object has the 'func' attribute set by set_defaults
+    if hasattr(args, 'func') and callable(args.func):
         try:
             module_logger.info(f"Executing command: {args.command}")
-            args.func(args) # Call the function linked by set_defaults
+            # Call the function associated with the command, passing the full args namespace
+            # This allows the target function to access specific args like args.start_date or args.since
+            args.func(args) 
             module_logger.info(f"Command '{args.command}' executed successfully.")
         except Exception as e:
+            # Catch errors during the execution of the command's function
             module_logger.error(f"Error executing command '{args.command}': {e}", exc_info=True)
-            sys.exit(1) # Exit with a non-zero code to indicate error
-        finally: # Ensure this message logs even if errors occur within the function
+            sys.exit(1) # Exit with error
+        finally:
+             # This will run even if an error occurs in the command function
              module_logger.info("Kingdom Auto Finance system CLI operation finished.")
     else:
-        # This should not be reached if subparsers are required=True
-        module_logger.error("No function associated with the parsed arguments.")
+        # Fallback if set_defaults wasn't called correctly (shouldn't happen with required=True)
+        module_logger.error(f"No function associated with command '{args.command}'.")
         parser.print_help()
         sys.exit(1)
 
 
 # --- Main Execution Guard ---
 if __name__ == "__main__":
-    # This block runs ONLY when the script is executed directly
-    # (e.g., 'python src/main.py process' or 'python -m src.main process')
-    # It ensures the CLI logic is called.
-    # If deploying as a Cloud Function with an 'app' entry point (using Flask),
-    # this block will NOT run in the cloud environment. Gunicorn/Google runs the 'app' object directly.
+    # This ensures cli_main() is called when script is run directly or via 'python -m src.main'
     cli_main()
