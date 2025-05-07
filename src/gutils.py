@@ -4,6 +4,7 @@ from google.oauth2.service_account import Credentials
 from google.cloud import secretmanager
 import json
 import logging
+import time
 from . import config # Assuming this runs from a context where 'src' is a package
 
 logger = logging.getLogger(__name__)
@@ -40,33 +41,61 @@ def get_gspread_client():
         raise ConnectionError(f"Could not authorize gspread client: {e}")
 
 
-def get_sheet_as_df(gspread_client, sheet_id, sheet_name=None):
-    """Opens a Google Sheet by ID and returns a specific worksheet as a Pandas DataFrame."""
-    try:
-        spreadsheet = gspread_client.open_by_key(sheet_id)
-        if sheet_name:
-            worksheet = spreadsheet.worksheet(sheet_name)
-        else:
-            worksheet = spreadsheet.sheet1 # Get the first sheet
-        
-        data = worksheet.get_all_values()
-        if not data:
-            logger.warning(f"Sheet '{sheet_name or 'first sheet'}' in spreadsheet ID '{sheet_id}' is empty.")
-            return pd.DataFrame()
-        
-        headers = data[0]
-        records = data[1:]
-        # Handle case where there are only headers and no records
-        if not records:
-             return pd.DataFrame(columns=headers)
-        df = pd.DataFrame(records, columns=headers)
-        return df
-    except gspread.exceptions.WorksheetNotFound:
-        logger.error(f"Worksheet '{sheet_name}' not found in spreadsheet ID '{sheet_id}'.")
-        return None # Or raise error
-    except Exception as e:
-        logger.error(f"Error reading sheet ID {sheet_id}, name '{sheet_name}': {e}", exc_info=True)
-        return None # Or raise error
+def get_sheet_as_df(gspread_client, sheet_id, sheet_name=None, max_retries=5, initial_delay=1):
+    """
+    Opens a Google Sheet by ID and returns a specific worksheet as a Pandas DataFrame.
+    Includes exponential backoff for quota errors.
+    """
+    retries = 0
+    delay = initial_delay
+    while retries < max_retries:
+        try:
+            spreadsheet = gspread_client.open_by_key(sheet_id)
+            if sheet_name:
+                worksheet = spreadsheet.worksheet(sheet_name)
+            else:
+                worksheet = spreadsheet.sheet1
+            
+            data = worksheet.get_all_values()
+            if not data:
+                logger.warning(f"Sheet '{sheet_name or 'first sheet'}' in spreadsheet ID '{sheet_id}' is empty.")
+                return pd.DataFrame()
+            
+            headers = data[0]
+            records = data[1:]
+            if not records:
+                return pd.DataFrame(columns=headers)
+            df = pd.DataFrame(records, columns=headers)
+            return df # Success! Exit the loop and function.
+
+        except gspread.exceptions.APIError as e:
+            # Specifically check for "Quota exceeded" (status code 429)
+            if e.response.status_code == 429: # type: ignore
+                retries += 1
+                if retries >= max_retries:
+                    logger.error(f"Quota exceeded for sheet ID {sheet_id}, name '{sheet_name}'. Max retries reached. Error: {e}")
+                    raise # Re-raise the error if max retries are exhausted
+                
+                wait_time = delay * (2 ** (retries -1)) # Exponential backoff
+                logger.warning(
+                    f"Quota exceeded for sheet ID {sheet_id}, name '{sheet_name}'. "
+                    f"Retrying in {wait_time:.2f} seconds... (Attempt {retries}/{max_retries})"
+                )
+                time.sleep(wait_time)
+            else:
+                # It's a different APIError, not quota related, so re-raise it immediately.
+                logger.error(f"Non-quota APIError reading sheet ID {sheet_id}, name '{sheet_name}': {e}", exc_info=True)
+                raise
+        except gspread.exceptions.WorksheetNotFound:
+            logger.error(f"Worksheet '{sheet_name}' not found in spreadsheet ID '{sheet_id}'.")
+            return None # Or raise
+        except Exception as e:
+            logger.error(f"General error reading sheet ID {sheet_id}, name '{sheet_name}': {e}", exc_info=True)
+            return None # Or raise
+    
+    # Should not be reached if max_retries leads to a raise, but as a fallback:
+    logger.error(f"Failed to read sheet ID {sheet_id}, name '{sheet_name}' after multiple retries.")
+    return None
 
 def update_worksheet_from_df(gspread_client, sheet_id, sheet_name, df):
     """Updates a Google Sheet worksheet with data from a Pandas DataFrame."""

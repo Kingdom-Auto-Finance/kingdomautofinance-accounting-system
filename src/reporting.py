@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import datetime
 import logging
+import time 
 from . import config
 from . import gutils
 
@@ -31,6 +32,15 @@ def generate_period_report(start_date_str, end_date_str):
     # Iterate through configured amortization sheet IDs
     for loan_id, sheet_id in config.AMORTIZATION_SHEET_IDS.items():
         logger.debug(f"Processing report data for LoanID: {loan_id}, SheetID: {sheet_id}")
+        
+         # --- ADD DELAY ---
+        try:
+            # Wait for 1 second (you can adjust this)
+            time.sleep(1) # <--- PAUSE FOR 1 SECOND 
+            logger.debug(f"Waited 1 second before processing {loan_id}")
+        except Exception as e_sleep: # Should not happen with time.sleep
+            logger.warning(f"Error during time.sleep: {e_sleep}")
+        
         schedule_df_raw = gutils.get_sheet_as_df(gs_client, sheet_id, "Schedule")
 
         if schedule_df_raw is None:

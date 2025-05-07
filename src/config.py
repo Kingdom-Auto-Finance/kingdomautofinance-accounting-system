@@ -14,7 +14,7 @@ AMORTIZATION_SHEET_IDS = {
 
 # --- Secret Manager ---
 # Paste the full Secret Resource Name from Step 4.3
-SERVICE_ACCOUNT_SECRET_RESOURCE_NAME = "projects/544331774603/secrets/kaf-service-account-key/versions/latest"
+SERVICE_ACCOUNT_SECRET_RESOURCE_NAME = "projects/544331774603/secrets/kaf-service-account-key/versions/1"
 
 # --- Local Paths (mainly for logs) ---
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs") # Correct path to logs at project root
