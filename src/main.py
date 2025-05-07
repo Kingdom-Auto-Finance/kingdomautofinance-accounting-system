@@ -8,14 +8,13 @@ import sys
 current_script_path = os.path.abspath(__file__)
 src_directory = os.path.dirname(current_script_path)
 project_root = os.path.dirname(src_directory)
-# if project_root not in sys.path: sys.path.insert(0, project_root) # Usually not needed with -m
+# if project_root not in sys.path: sys.path.insert(0, project_root) 
 
-# --- Import project modules using relative imports ---
+# --- Import project modules ---
 try:
     from . import config 
     from .payment_processor import process_payments
     from .reporting import generate_period_report
-    # Import the daily summary function
     from .daily_summary_reporter import generate_and_update_daily_summary 
 except ImportError as e:
      print(f"Import Error: {e}. Check imports/paths/execution method ('python -m src.main ...').")
@@ -25,7 +24,7 @@ except ImportError as e:
 # --- Logging Setup ---
 if not os.path.exists(config.LOG_DIR):
     try:
-        os.makedirs(config.LOG_DIR, exist_ok=True)
+        os.makedirs(config.LOG_DIR, exist_ok=True) 
         gitignore_path = os.path.join(config.LOG_DIR, ".gitignore")
         if not os.path.exists(gitignore_path):
             try:
@@ -49,7 +48,7 @@ module_logger = logging.getLogger(__name__)
 
 
 # --- Optional Flask App ---
-# (Keep commented out unless needed for HTTP Trigger)
+# (Keep commented out unless needed)
 
 
 # --- Command-Line Interface (CLI) Definition ---
@@ -67,27 +66,45 @@ def cli_main():
     )
 
     # --- Process payments command ---
-    parser_process = subparsers.add_parser("process", help="Process new payments from Google Sheet Log.")
-    parser_process.set_defaults(func=process_payments) # Direct function link
+    parser_process = subparsers.add_parser(
+        "process",
+        help="Process new payments from the Google Sheet Log."
+    )
+    # *** Use lambda to call process_payments without arguments ***
+    parser_process.set_defaults(func=lambda args_ns: process_payments()) 
+    # *** End Change ***
 
     # --- Generate period report command ---
-    parser_report = subparsers.add_parser("report", help="Generate a financial report for a specific period.")
-    parser_report.add_argument("start_date", metavar='YYYY-MM-DD', type=str, help="Report start date (YYYY-MM-DD)")
-    parser_report.add_argument("end_date", metavar='YYYY-MM-DD', type=str, help="Report end date (YYYY-MM-DD)")
-    parser_report.set_defaults(func=lambda args_ns: generate_period_report(args_ns.start_date, args_ns.end_date))
+    parser_report = subparsers.add_parser(
+        "report",
+        help="Generate a financial report for a specific period."
+    )
+    parser_report.add_argument(
+        "start_date",
+        metavar='YYYY-MM-DD', 
+        type=str, 
+        help="Report start date (YYYY-MM-DD)"
+    )
+    parser_report.add_argument(
+        "end_date",
+        metavar='YYYY-MM-DD',
+        type=str,
+        help="Report end date (YYYY-MM-DD)"
+    )
+    parser_report.set_defaults(
+        func=lambda args_ns: generate_period_report(args_ns.start_date, args_ns.end_date)
+    )
     
     # --- Generate daily summary report command ---
     parser_daily = subparsers.add_parser(
         "daily_summary",
         help="Update daily summary sheet incrementally (default). Use --full-rebuild for full history."
     )
-    # *** Changed argument to --full-rebuild flag ***
     parser_daily.add_argument(
         "--full-rebuild",
-        action='store_true', # Makes it a boolean flag, default is False when not present
+        action='store_true', 
         help="Optional: Force a full rebuild of the entire daily summary history."
     )
-    # *** Link to function, passing the flag's value ***
     parser_daily.set_defaults(
         func=lambda args_ns: generate_and_update_daily_summary(full_rebuild=args_ns.full_rebuild) 
     )
@@ -103,8 +120,7 @@ def cli_main():
     if hasattr(args, 'func') and callable(args.func):
         try:
             module_logger.info(f"Executing command: {args.command}")
-            # Pass the full args namespace, so the lambda can access args.full_rebuild
-            args.func(args) 
+            args.func(args) # Call the function linked by set_defaults (lambda handles args)
             module_logger.info(f"Command '{args.command}' executed successfully.")
         except Exception as e:
             module_logger.error(f"Error executing command '{args.command}': {e}", exc_info=True)
