@@ -14,8 +14,6 @@ from datetime import datetime, date
 from . import config 
 
 logger = logging.getLogger(__name__)
-
-# Cache for initialized Google API clients to avoid re-authentication
 drive_service_client = None 
 gspread_authorized_client = None 
 
@@ -25,7 +23,6 @@ def safe_string_to_float(value_str, context=""):
     if pd.isna(value_str) or str(value_str).strip() == "": return pd.NA 
     try:
         cleaned_str = str(value_str).replace('$', '').replace(',', '').strip()
-        # Handle parentheses for negative numbers
         if cleaned_str.startswith('(') and cleaned_str.endswith(')'): cleaned_str = '-' + cleaned_str[1:-1]
         return float(cleaned_str)
     except (ValueError, TypeError): logger.warning(f"Could not convert '{value_str}' to float for {context}. Returning pd.NA."); return pd.NA 
@@ -48,10 +45,8 @@ def get_loan_ids_from_drive_folder(folder_id):
         drive_service = get_drive_service(); 
         if not drive_service: logger.error("Cannot get Drive service to list loan IDs."); return []
         logger.info(f"Listing Google Sheets in Drive Folder ID: {folder_id}")
-        # Use files().list() which returns a request object for pagination
         request = drive_service.files().list(q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false", pageSize=1000, fields="nextPageToken, files(id, name)", pageToken=page_token)
         while request is not None:
-            # Get the request object for the next page, or None if no more pages
             results = request.execute(); items = results.get('files', [])
             if not items and not loan_ids: 
                  if page_token is None: logger.warning(f"No sheets found in folder: {folder_id}"); return []
@@ -88,7 +83,6 @@ def get_service_account_credentials_from_secret_manager():
         response = sm_client.access_secret_version(request={"name": config.SERVICE_ACCOUNT_SECRET_RESOURCE_NAME})
         secret_payload_str = response.payload.data.decode("UTF-8")
         service_account_info = json.loads(secret_payload_str)
-        # Ensure all required scopes are listed
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.readonly']
         credentials = Credentials.from_service_account_info(service_account_info, scopes=scopes)
         logger.debug("Successfully retrieved credentials from Secret Manager.")
