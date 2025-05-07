@@ -15,6 +15,8 @@ PAYMENTS_LOG_SHEET_ID = "1WS70qASt5WXUrv_DuRxFG7MYoqbyMXBT08t-WW6zFbk" # Keep th
 # e.g., https://drive.google.com/drive/folders/THIS_IS_THE_FOLDER_ID
 AMORTIZATION_SCHEDULES_FOLDER_ID = "1u5nAuQVIRosLsZgPPuPLmRriGRyQf60s"
 
+DAILY_SUMMARY_REPORT_SHEET_ID = "1ln9Bw9HkulHA_s1m8E2XnGbIs9K_-bkBikdjlo0tdLo"
+
 # --- Secret Manager ---
 # Replace with your actual Secret Resource Name from Google Cloud Secret Manager
 SERVICE_ACCOUNT_SECRET_RESOURCE_NAME = "projects/544331774603/secrets/kaf-service-account-key/versions/1"
