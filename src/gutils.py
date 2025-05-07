@@ -1,3 +1,4 @@
+# src/gutils.py
 import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials # For creating credentials from service account info
@@ -34,18 +35,14 @@ def get_service_account_credentials_from_secret_manager():
 
 
 # --- Main Function Called by Other Modules ---
-def get_gspread_client(): # <<<< THIS IS THE FUNCTION PAYMENT_PROCESSOR.PY CALLS
+def get_gspread_client():
     """
     Authenticates with Google Sheets API using credentials obtained from Secret Manager
     and returns an authorized gspread client instance.
     """
     try:
-        # This function now directly calls the helper above it
         credentials = get_service_account_credentials_from_secret_manager()
-        
-        # Authorize gspread with these credentials
         gspread_client = gspread.authorize(credentials)
-        
         logger.info("gspread client has been successfully authorized.")
         return gspread_client
     except Exception as e:
@@ -85,7 +82,6 @@ def get_sheet_as_df(gspread_client, sheet_id, sheet_name=None, max_retries=5, in
             return df
 
         except gspread.exceptions.APIError as e:
-            # ... (quota handling) ...
             if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 429:
                 retries += 1
                 if retries >= max_retries: logger.error(f"Quota exceeded... Max retries reached. Error: {e}"); raise
@@ -125,8 +121,7 @@ def update_worksheet_from_df(gspread_client, sheet_id, sheet_name, df_to_write):
                  df_prepared[col] = df_prepared[col].apply(lambda x: x.strftime(fmt) if pd.notna(x) else '')
              elif pd.api.types.is_bool_dtype(df_prepared[col]):
                  df_prepared[col] = df_prepared[col].apply(lambda x: 'TRUE' if pd.notna(x) and x is True else ('FALSE' if pd.notna(x) and x is False else ''))
-             else: # Includes numeric and object types
-                 # Convert entire column to string and replace NaN representations
+             else:
                  df_prepared[col] = df_prepared[col].astype(str).replace({'nan': '', '<NA>': '', 'NaT': ''})
 
         list_of_lists_for_gspread = [df_prepared.columns.tolist()] + df_prepared.values.tolist()
@@ -145,13 +140,23 @@ def update_worksheet_from_df(gspread_client, sheet_id, sheet_name, df_to_write):
     except gspread.exceptions.WorksheetNotFound: logger.error(f"Worksheet '{sheet_name}' not found..."); return False
     except Exception as e: logger.error(f"Error updating sheet...: {e}", exc_info=True); return False
 
-# --- Function to Get Amortization Sheet ID ---
+# --- Function to Get Amortization Sheet ID (CASE-INSENSITIVE KEY LOOKUP) ---
 def get_amortization_sheet_id(loan_id):
     """
-    Retrieves the Google Sheet ID for a given loan_id from config.
+    Retrieves the Google Sheet ID for a given loan_id from the 
+    config.AMORTIZATION_SHEET_IDS dictionary using a case-insensitive lookup.
     """
-    loan_id_str = str(loan_id).strip().upper()
-    sheet_id = config.AMORTIZATION_SHEET_IDS.get(loan_id_str)
-    if not sheet_id:
-        logger.warning(f"No Google Sheet ID configured for LoanID: '{loan_id_str}'.")
-    return sheet_id
+    # Standardize the input loan_id for comparison (uppercase, stripped)
+    loan_id_upper = str(loan_id).strip().upper()
+    
+    # Iterate through the dictionary keys in config.py
+    for key_in_config, sheet_id_value in config.AMORTIZATION_SHEET_IDS.items():
+        # Compare the uppercased input ID with the uppercased key from the dictionary
+        if str(key_in_config).strip().upper() == loan_id_upper:
+            # Found a match (ignoring case)
+            logger.debug(f"Found Sheet ID '{sheet_id_value}' for LoanID '{loan_id}' using key '{key_in_config}'.")
+            return sheet_id_value # Return the corresponding sheet ID
+
+    # If the loop finishes without finding a match
+    logger.warning(f"No Google Sheet ID configured in config.py for LoanID: '{loan_id}' (checked case-insensitively as '{loan_id_upper}').")
+    return None # Return None if no match is found
