@@ -7,15 +7,16 @@ PROJECT_ROOT = os.path.dirname(BASE_DIR)  # Path to 'KingdomAutoFinance' directo
 
 # --- Google Sheet Identifiers ---
 # Replace with your actual Payments Log Sheet ID
-PAYMENTS_LOG_SHEET_ID = "1WS70qASt5WXUrv_DuRxFG7MYoqbyMXBT08t-WW6zFbk" # Keep this
+# --- Google Sheet Identifiers ---
+SOURCE_PAYMENTS_SHEET_ID = "14aPTzhbjpRXXTjzLWbOtj5ZFiNhbWAGmgmXzkwkAvU8" # Added Source Sheet ID
+PAYMENTS_LOG_SHEET_ID = "1WS70qASt5WXUrv_DuRxFG7MYoqbyMXBT08t-WW6zFbk" 
+DAILY_SUMMARY_REPORT_SHEET_ID = "1ln9Bw9HkulHA_s1m8E2XnGbIs9K_-bkBikdjlo0tdLo" 
 
 # --- Google Drive Folder for Amortization Schedules ---
 # ** ACTION: Replace with the actual ID of the Google Drive folder **
 # Find this ID in the folder's URL in Google Drive
 # e.g., https://drive.google.com/drive/folders/THIS_IS_THE_FOLDER_ID
 AMORTIZATION_SCHEDULES_FOLDER_ID = "1u5nAuQVIRosLsZgPPuPLmRriGRyQf60s"
-
-DAILY_SUMMARY_REPORT_SHEET_ID = "1ln9Bw9HkulHA_s1m8E2XnGbIs9K_-bkBikdjlo0tdLo"
 
 # --- Secret Manager ---
 # Replace with your actual Secret Resource Name from Google Cloud Secret Manager
