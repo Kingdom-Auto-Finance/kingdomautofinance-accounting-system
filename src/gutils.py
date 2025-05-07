@@ -76,7 +76,7 @@ def get_sheet_as_df(gspread_client, sheet_id, sheet_name=None, max_retries=5, in
                     logger.error(f"Quota exceeded for sheet ID {sheet_id}, name '{sheet_name}'. Max retries reached. Error: {e}")
                     raise # Re-raise the error if max retries are exhausted
                 
-                wait_time = delay * (2 ** (retries -1)) # Exponential backoff
+                wait_time = delay * (10 ** (retries -1)) # Exponential backoff
                 logger.warning(
                     f"Quota exceeded for sheet ID {sheet_id}, name '{sheet_name}'. "
                     f"Retrying in {wait_time:.2f} seconds... (Attempt {retries}/{max_retries})"
