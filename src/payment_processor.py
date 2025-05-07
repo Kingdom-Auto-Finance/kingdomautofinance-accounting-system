@@ -1,3 +1,4 @@
+# src/payment_processor.py
 import pandas as pd
 from datetime import datetime
 import logging
@@ -13,237 +14,267 @@ def process_payments():
     try:
         gs_client = gutils.get_gspread_client()
     except ConnectionError as e:
-        logger.error(f"CRITICAL: Failed to initialize Google Sheets client: {e}. Aborting payment processing.")
+        logger.error(f"CRITICAL: Failed to initialize Google Sheets client: {e}. Aborting.")
         return
 
-    payments_log_df_original_state = gutils.get_sheet_as_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1")
+    # --- 1. Read Payments Log ---
+    # df_log_sheet_state: This DataFrame will hold the state of the payments log.
+    # We will ONLY modify its 'ProcessedStatus' and 'ProcessedTimestamp' columns.
+    # All other columns (LoanID, PaymentDate, PaymentAmount) will remain untouched from their original read state.
+    df_log_sheet_state = gutils.get_sheet_as_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1")
     
-    if payments_log_df_original_state is None or payments_log_df_original_state.empty:
+    if df_log_sheet_state is None or df_log_sheet_state.empty:
         logger.info("Payments log is empty or could not be read. No payments to process.")
         return
 
-    original_payments_log_headers = payments_log_df_original_state.columns.tolist()
-    payments_df_for_validation = payments_log_df_original_state.copy()
-    payments_df_for_validation.columns = [str(col).strip().lower() for col in payments_df_for_validation.columns]
+    original_log_headers = df_log_sheet_state.columns.tolist()
 
-    LOAN_ID_COL_LOG = 'loanid'
-    PAYMENT_DATE_COL_LOG = 'paymentdate'
-    PAYMENT_AMOUNT_COL_LOG = 'paymentamount'
-    PROCESSED_STATUS_COL_LOG = 'processedstatus'
-    PROCESSED_TIMESTAMP_COL_LOG = 'processedtimestamp'
+    # Standardized lowercase column names for internal processing logic
+    LOAN_ID_COL_LOWER = 'loanid'
+    PAYMENT_DATE_COL_LOWER = 'paymentdate'
+    PAYMENT_AMOUNT_COL_LOWER = 'paymentamount'
+    PROCESSED_STATUS_COL_LOWER = 'processedstatus'
+    PROCESSED_TIMESTAMP_COL_LOWER = 'processedtimestamp'
 
-    original_status_col_name = next((h for h in original_payments_log_headers if str(h).strip().lower() == PROCESSED_STATUS_COL_LOG), PROCESSED_STATUS_COL_LOG)
-    original_timestamp_col_name = next((h for h in original_payments_log_headers if str(h).strip().lower() == PROCESSED_TIMESTAMP_COL_LOG), PROCESSED_TIMESTAMP_COL_LOG)
+    # Map original headers to their lowercase versions for reliable access
+    header_map = {str(h).strip().lower(): h for h in original_log_headers}
 
-    essential_log_cols = [LOAN_ID_COL_LOG, PAYMENT_DATE_COL_LOG, PAYMENT_AMOUNT_COL_LOG]
-    for col_name in essential_log_cols:
-        if col_name not in payments_df_for_validation.columns:
-            logger.error(f"CRITICAL: Essential column '{col_name}' missing from Payments Log. Headers: {original_payments_log_headers}. Aborting.")
-            return 
-    
-    if original_status_col_name not in payments_log_df_original_state.columns:
-        payments_log_df_original_state[original_status_col_name] = ''
-    if original_timestamp_col_name not in payments_log_df_original_state.columns:
-        payments_log_df_original_state[original_timestamp_col_name] = pd.NaT
+    # Get the actual (original casing) column names for status and timestamp
+    # If these columns don't exist, we'll add them to df_log_sheet_state before writing back.
+    status_col_original_casing = header_map.get(PROCESSED_STATUS_COL_LOWER)
+    timestamp_col_original_casing = header_map.get(PROCESSED_TIMESTAMP_COL_LOWER)
+
+    if not status_col_original_casing:
+        status_col_original_casing = PROCESSED_STATUS_COL_LOWER # Default to lowercase if not found
+        df_log_sheet_state[status_col_original_casing] = '' # Add the column
+        logger.info(f"Added '{status_col_original_casing}' column to Payments Log DataFrame as it was missing.")
+    if not timestamp_col_original_casing:
+        timestamp_col_original_casing = PROCESSED_TIMESTAMP_COL_LOWER
+        df_log_sheet_state[timestamp_col_original_casing] = pd.NaT # Add as datetime compatible
+        logger.info(f"Added '{timestamp_col_original_casing}' column to Payments Log DataFrame as it was missing.")
 
 
-    valid_for_processing_indices = []
-    rows_with_initial_errors = False # Flag to check if any errors occurred during validation
+    # --- 2. Identify and Validate Pending Payments ---
+    payments_to_attempt_processing = [] # List of (index, validated_data_dict)
 
-    for index, row_to_validate in payments_df_for_validation.iterrows():
-        current_original_status = str(payments_log_df_original_state.loc[index, original_status_col_name]).strip().lower()
-        if current_original_status.startswith('processed') or current_original_status.startswith('error'):
-            continue 
+    for index, raw_row_series in df_log_sheet_state.iterrows():
+        # Check current status using the original cased column name
+        current_status_val = str(raw_row_series.get(status_col_original_casing, '')).strip().lower()
+        if current_status_val.startswith('processed') or current_status_val.startswith('error'):
+            continue # Skip if already handled in a previous run
 
-        has_parsing_error_this_row = False
+        has_critical_error = False
+        validated_data = {}
+
+        # LoanID: Read raw, strip, uppercase. Handle "NAN" string as error.
+        raw_loan_id = str(raw_row_series.get(header_map.get(LOAN_ID_COL_LOWER, LOAN_ID_COL_LOWER), '')).strip()
+        if not raw_loan_id or raw_loan_id.upper() == "NAN":
+            logger.warning(f"Log index {index}: LoanID is missing or 'NAN' ('{raw_loan_id}'). Marking as error.")
+            df_log_sheet_state.loc[index, status_col_original_casing] = "Error - Invalid/Missing LoanID in Log"
+            has_critical_error = True
+        else:
+            validated_data[LOAN_ID_COL_LOWER] = raw_loan_id.upper()
+
+        # PaymentDate: Read raw, parse strictly to YYYY-MM-DD.
+        raw_payment_date = str(raw_row_series.get(header_map.get(PAYMENT_DATE_COL_LOWER, PAYMENT_DATE_COL_LOWER), '')).strip()
+        if not has_critical_error:
+            parsed_date = pd.NaT
+            if not raw_payment_date:
+                logger.warning(f"Log index {index}, LoanID '{validated_data.get(LOAN_ID_COL_LOWER)}': PaymentDate is empty. Marking as error.")
+                df_log_sheet_state.loc[index, status_col_original_casing] = "Error - Missing PaymentDate in Log"
+                has_critical_error = True
+            else:
+                try:
+                    # Try specific format, then general if that fails
+                    parsed_date = pd.to_datetime(raw_payment_date, format='%Y-%m-%d', errors='raise')
+                except (ValueError, TypeError):
+                    try:
+                        parsed_date = pd.to_datetime(raw_payment_date, errors='raise')
+                        logger.warning(f"Log index {index}, LoanID '{validated_data.get(LOAN_ID_COL_LOWER)}': PaymentDate '{raw_payment_date}' not YYYY-MM-DD. Parsed generally. Correct source format.")
+                    except (ValueError, TypeError):
+                        logger.warning(f"Log index {index}, LoanID '{validated_data.get(LOAN_ID_COL_LOWER)}': PaymentDate '{raw_payment_date}' is invalid. Marking as error.")
+                        df_log_sheet_state.loc[index, status_col_original_casing] = "Error - Invalid PaymentDate in Log"
+                        has_critical_error = True
+            validated_data[PAYMENT_DATE_COL_LOWER] = parsed_date
+
+
+        # PaymentAmount: Read raw, convert to positive float.
+        raw_payment_amount = str(raw_row_series.get(header_map.get(PAYMENT_AMOUNT_COL_LOWER, PAYMENT_AMOUNT_COL_LOWER), '')).strip()
+        if not has_critical_error:
+            parsed_amount = pd.NA
+            if not raw_payment_amount:
+                logger.warning(f"Log index {index}, LoanID '{validated_data.get(LOAN_ID_COL_LOWER)}': PaymentAmount is empty. Marking as error.")
+                df_log_sheet_state.loc[index, status_col_original_casing] = "Error - Missing PaymentAmount in Log"
+                has_critical_error = True
+            else:
+                try:
+                    parsed_amount = float(raw_payment_amount)
+                    if parsed_amount <= 0:
+                        raise ValueError("Payment amount must be positive.")
+                except (ValueError, TypeError):
+                    logger.warning(f"Log index {index}, LoanID '{validated_data.get(LOAN_ID_COL_LOWER)}': PaymentAmount '{raw_payment_amount}' invalid/not positive. Marking as error.")
+                    df_log_sheet_state.loc[index, status_col_original_casing] = "Error - Invalid PaymentAmount in Log"
+                    has_critical_error = True
+            validated_data[PAYMENT_AMOUNT_COL_LOWER] = parsed_amount
         
-        # Validate LoanID
-        loan_id_val = str(row_to_validate.get(LOAN_ID_COL_LOG, '')).strip().upper()
-        if not loan_id_val or loan_id_val == "NAN": # Check for empty string or literal "NAN"
-            logger.warning(f"Log row index {index}: LoanID is '{loan_id_val}'. Marking as error.")
-            payments_log_df_original_state.loc[index, original_status_col_name] = "Error - Invalid/Missing LoanID in Log"
-            has_parsing_error_this_row = True
+        if has_critical_error:
+            df_log_sheet_state.loc[index, timestamp_col_original_casing] = datetime.now()
         else:
-            payments_df_for_validation.loc[index, LOAN_ID_COL_LOG] = loan_id_val
+            # If all critical fields parsed correctly, add to list for processing
+            payments_to_attempt_processing.append({'original_index': index, 'data': validated_data})
 
-        # Validate PaymentDate (expect YYYY-MM-DD)
-        raw_date_val = row_to_validate.get(PAYMENT_DATE_COL_LOG)
-        parsed_date_val = pd.NaT # Default to NaT
-        if not has_parsing_error_this_row:
-            try:
-                # Attempt to parse with specific format first, then general
-                if pd.notna(raw_date_val) and str(raw_date_val).strip() != "": # Only parse if not already NA or empty
-                    parsed_date_val = pd.to_datetime(raw_date_val, format='%Y-%m-%d', errors='raise')
-                elif pd.isna(raw_date_val) or str(raw_date_val).strip() == "": # If it's blank or NaN, it's an error
-                    raise ValueError("Date string is empty or missing")
-            except (ValueError, TypeError): # Catch if specific format fails
-                try: 
-                    if pd.notna(raw_date_val) and str(raw_date_val).strip() != "":
-                        parsed_date_val = pd.to_datetime(raw_date_val, errors='raise') # General parse as fallback
-                        logger.warning(f"Log row index {index}, LoanID {loan_id_val}: PaymentDate '{raw_date_val}' not YYYY-MM-DD. Parsed generally. Correct source.")
-                    else: # If still blank or NaN after first try
-                        raise ValueError("Date string is empty or missing after fallback attempt")
-                except (ValueError, TypeError): # Catch if general parse also fails or it was empty
-                    logger.warning(f"Log row index {index}, LoanID {loan_id_val}: PaymentDate '{raw_date_val}' is invalid or missing. Marking as error.")
-                    payments_log_df_original_state.loc[index, original_status_col_name] = "Error - Invalid PaymentDate in Log"
-                    has_parsing_error_this_row = True
-        payments_df_for_validation.loc[index, PAYMENT_DATE_COL_LOG] = parsed_date_val # Store parsed date (or NaT if error)
-
-        # Validate PaymentAmount (expect positive number)
-        raw_amount_val = row_to_validate.get(PAYMENT_AMOUNT_COL_LOG)
-        parsed_amount_val = pd.NA 
-        if not has_parsing_error_this_row:
-            try:
-                if pd.isna(raw_amount_val) or str(raw_amount_val).strip() == "":
-                    raise ValueError("Payment amount is empty or missing")
-                parsed_amount_val = float(raw_amount_val)
-                if parsed_amount_val <= 0:
-                    raise ValueError("Payment amount must be positive.")
-            except (ValueError, TypeError):
-                logger.warning(f"Log row index {index}, LoanID {loan_id_val}: PaymentAmount '{raw_amount_val}' invalid/missing/not positive. Marking as error.")
-                payments_log_df_original_state.loc[index, original_status_col_name] = "Error - Invalid PaymentAmount in Log"
-                has_parsing_error_this_row = True
-        payments_df_for_validation.loc[index, PAYMENT_AMOUNT_COL_LOG] = parsed_amount_val
-
-
-        if has_parsing_error_this_row:
-            payments_log_df_original_state.loc[index, original_timestamp_col_name] = datetime.now()
-            rows_with_initial_errors = True # Flag that at least one error occurred
-        else:
-            # Only add to valid_for_processing_indices if ALL critical fields are valid
-            # Specifically, ensure parsed_date_val is NOT NaT
-            if pd.notna(payments_df_for_validation.loc[index, LOAN_ID_COL_LOG]) and \
-               payments_df_for_validation.loc[index, LOAN_ID_COL_LOG] != "NAN" and \
-               pd.notna(payments_df_for_validation.loc[index, PAYMENT_DATE_COL_LOG]) and \
-               pd.notna(payments_df_for_validation.loc[index, PAYMENT_AMOUNT_COL_LOG]):
-                valid_for_processing_indices.append(index)
-            else: # Should have been caught by has_parsing_error_this_row, but as a safeguard
-                logger.warning(f"Log row index {index}, LoanID {loan_id_val}: Row marked invalid due to NaT/NaN in critical fields after parsing. Status: {payments_log_df_original_state.loc[index, original_status_col_name]}")
-                if not str(payments_log_df_original_state.loc[index, original_status_col_name]).lower().startswith("error"):
-                    payments_log_df_original_state.loc[index, original_status_col_name] = "Error - Invalid Parsed Data"
-                    payments_log_df_original_state.loc[index, original_timestamp_col_name] = datetime.now()
-                rows_with_initial_errors = True
-
-
-    if not valid_for_processing_indices:
-        logger.info("No valid pending payments found to process after initial validation.")
-        if rows_with_initial_errors: # If errors were marked, write them back
+    if not payments_to_attempt_processing:
+        logger.info("No valid payments found to attempt processing after validation.")
+        # If any rows were marked with parsing errors on df_log_sheet_state, write them back.
+        if (df_log_sheet_state[status_col_original_casing].astype(str).str.lower().str.startswith('error', na=False)).any():
             logger.info("Writing back payments log with parsing error statuses (no payments processed).")
-            if not gutils.update_worksheet_from_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1", payments_log_df_original_state):
+            if not gutils.update_worksheet_from_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1", df_log_sheet_state): # Write original state
                 logger.error("CRITICAL: Failed to update Payments Log sheet with initial parsing error statuses.")
             else:
                 logger.info("Payments Log sheet updated with parsing error statuses.")
         return
         
-    pending_payments_to_process_df = payments_df_for_validation.loc[valid_for_processing_indices].sort_values(by=PAYMENT_DATE_COL_LOG, ascending=True).copy()
-    logger.info(f"Found {len(pending_payments_to_process_df)} payments validated for processing attempt.")
+    # Sort payments to process by date
+    payments_to_attempt_processing.sort(key=lambda p: p['data'][PAYMENT_DATE_COL_LOWER])
+    logger.info(f"Found {len(payments_to_attempt_processing)} payments validated for processing attempt.")
 
-    # --- 2. Process Each Valid Pending Payment ---
-    for original_log_index, payment_to_process_row in pending_payments_to_process_df.iterrows():
-        loan_id = payment_to_process_row[LOAN_ID_COL_LOG]
-        actual_payment_date_dt = payment_to_process_row[PAYMENT_DATE_COL_LOG] # This should now always be a valid datetime
-        actual_payment_amount_from_log = payment_to_process_row[PAYMENT_AMOUNT_COL_LOG]
+    # --- 3. Process Each Validated Payment ---
+    for payment_item in payments_to_attempt_processing:
+        original_log_index = payment_item['original_index']
+        validated_data = payment_item['data']
 
-        # The safeguard check for NaT date should ideally not be hit anymore due to improved validation above.
-        # If it is hit, it means there's a flaw in the validation logic that allowed a NaT date through.
+        loan_id = validated_data[LOAN_ID_COL_LOWER]
+        actual_payment_date_dt = validated_data[PAYMENT_DATE_COL_LOWER]
+        actual_payment_amount_from_log = validated_data[PAYMENT_AMOUNT_COL_LOWER]
+
+        # Safeguards (should ideally not be hit if validation above is perfect)
         if pd.isna(actual_payment_date_dt):
-            logger.critical(f"INTERNAL LOGIC ERROR: PaymentDate for LoanID '{loan_id}' (log index {original_log_index}) is NaT despite validation. Skipping.")
-            payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Internal NaT Date at Process"
-            payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+            logger.critical(f"INTERNAL LOGIC ERROR: PaymentDate for LoanID '{loan_id}' (log index {original_log_index}) is NaT. Skipping.")
+            df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Internal NaT Date at Process"
+            df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
             continue
-        if pd.isna(loan_id) or loan_id == '' or loan_id == "NAN":
-             logger.critical(f"INTERNAL LOGIC ERROR: LoanID for payment (log index {original_log_index}) is '{loan_id}' despite validation. Skipping.")
-             payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Internal Invalid LoanID at Process"
-             payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+        if pd.isna(loan_id) or loan_id == '' or loan_id == "NAN": # Should be caught by earlier validation
+             logger.critical(f"INTERNAL LOGIC ERROR: LoanID for payment (log index {original_log_index}) is '{loan_id}'. Skipping.")
+             df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Internal Invalid LoanID at Process"
+             df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
              continue
 
-        actual_payment_date_str = actual_payment_date_dt.strftime("%Y-%m-%d") # Error was here
+        actual_payment_date_str = actual_payment_date_dt.strftime("%Y-%m-%d")
         logger.info(f"Processing payment from log index {original_log_index}: LoanID={loan_id}, Date={actual_payment_date_str}, Amount={actual_payment_amount_from_log:.2f}")
 
         amortization_sheet_id = gutils.get_amortization_sheet_id(loan_id)
         if not amortization_sheet_id:
             logger.error(f"Amort. Sheet ID for LoanID '{loan_id}' not found. Log index {original_log_index}.")
-            payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - No Amort. Sheet ID"
-            payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+            df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - No Amort. Sheet ID"
+            df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
             continue
 
         try:
-            # --- Start of Amortization Processing Block (Copied from previous, ensure local vars are defined) ---
+            # --- Start of Amortization Processing Block (logic from previous responses) ---
             loan_terms_df_raw = gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "LoanTerms")
             schedule_df_raw = gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "Schedule")
 
             if loan_terms_df_raw is None or schedule_df_raw is None or loan_terms_df_raw.empty or schedule_df_raw.empty:
                 logger.error(f"Could not read or empty LoanTerms/Schedule for {loan_id}. Log index {original_log_index}.")
-                payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Read/Empty Amort. Sheet"
-                payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+                df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Read/Empty Amort. Sheet"
+                df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
                 continue
             
             loan_terms_df = loan_terms_df_raw.copy()
-            loan_terms_df.columns = [str(col).strip().lower() for col in loan_terms_df.columns]
+            loan_terms_df.columns = [str(col).strip().lower() for col in loan_terms_df.columns] # Lowercase for processing
+            
             schedule_df = schedule_df_raw.copy()
-            current_original_schedule_headers = schedule_df.columns.tolist() 
-            schedule_df.columns = [str(col).strip().lower() for col in schedule_df.columns]
+            current_original_schedule_headers = schedule_df.columns.tolist() # Store for writing back
+            schedule_df.columns = [str(col).strip().lower() for col in schedule_df.columns] # Lowercase for processing
 
+            # Define expected lowercase column names for Amortization Schedule
             DUE_DATE_COL_SCHED = 'duedate'; BEGIN_BAL_COL_SCHED = 'beginningbalance'; SCHED_PMT_COL_SCHED = 'scheduledpayment';
             ACTUAL_PMT_DATE_COL_SCHED = 'actualpaymentdate'; ACTUAL_PMT_AMT_COL_SCHED = 'actualpaymentamount';
             INTEREST_PAID_COL_SCHED = 'interestpaid'; PRINCIPAL_PAID_COL_SCHED = 'principalpaid';
             LATE_FEE_COL_SCHED = 'latefee'; CREDIT_APPLIED_COL_SCHED = 'creditapplied';
-            ENDING_BAL_COL_SCHED = 'endingbalance'; STATUS_COL_SCHED = 'status'
+            ENDING_BAL_COL_SCHED = 'endingbalance'; STATUS_COL_SCHED = 'status';
             
             if 'parameter' not in loan_terms_df.columns or 'value' not in loan_terms_df.columns:
-                payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Bad LoanTerms Format"
-                payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+                logger.error(f"LoanTerms for {loan_id} missing 'parameter' or 'value' columns. Log index {original_log_index}.")
+                df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Bad LoanTerms Format"
+                df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
                 continue
-            loan_terms_s = loan_terms_df.set_index('parameter')['value'].astype(str).str.strip()
+            loan_terms_s = loan_terms_df.set_index('parameter')['value'].astype(str).str.strip() # Values read as strings initially
 
+            # Explicit type conversions for schedule_df (ensure columns exist before accessing)
+            # Dates expect YYYY-MM-DD string from sheet for parsing
             schedule_df[DUE_DATE_COL_SCHED] = pd.to_datetime(schedule_df.get(DUE_DATE_COL_SCHED), format='%Y-%m-%d', errors='coerce')
-            numeric_cols_schedule = [BEGIN_BAL_COL_SCHED, SCHED_PMT_COL_SCHED, ACTUAL_PMT_AMT_COL_SCHED, INTEREST_PAID_COL_SCHED, PRINCIPAL_PAID_COL_SCHED, LATE_FEE_COL_SCHED, CREDIT_APPLIED_COL_SCHED, ENDING_BAL_COL_SCHED]
-            for col in numeric_cols_schedule: schedule_df[col] = pd.to_numeric(schedule_df.get(col), errors='coerce')
             schedule_df[ACTUAL_PMT_DATE_COL_SCHED] = pd.to_datetime(schedule_df.get(ACTUAL_PMT_DATE_COL_SCHED), format='%Y-%m-%d', errors='coerce')
+            
+            numeric_cols_schedule = [BEGIN_BAL_COL_SCHED, SCHED_PMT_COL_SCHED, ACTUAL_PMT_AMT_COL_SCHED, 
+                                     INTEREST_PAID_COL_SCHED, PRINCIPAL_PAID_COL_SCHED, LATE_FEE_COL_SCHED, 
+                                     CREDIT_APPLIED_COL_SCHED, ENDING_BAL_COL_SCHED]
+            for col in numeric_cols_schedule:
+                schedule_df[col] = pd.to_numeric(schedule_df.get(col), errors='coerce') # Missing values become NaN
+            
             if STATUS_COL_SCHED not in schedule_df.columns: schedule_df[STATUS_COL_SCHED] = "Due"
 
+
+            # Fetch and validate loan terms (interest rate specifically)
             try:
-                annual_interest_rate_str = loan_terms_s.get("annualinterestrate", "0.0")
+                # Get values from series, then convert. Handle missing keys gracefully.
+                annual_interest_rate_str = loan_terms_s.get("annualinterestrate", "0.0") # Ensure key matches sheet
                 annual_interest_rate = float(annual_interest_rate_str)
                 if annual_interest_rate < 0: raise ValueError("Annual interest rate cannot be negative.")
-                late_fee_percentage = float(loan_terms_s.get("latefeepercentage", str(config.DEFAULT_LATE_FEE_PERCENTAGE)))
-                grace_period_days = int(loan_terms_s.get("graceperioddays", str(config.DEFAULT_GRACE_PERIOD_DAYS)))
-            except (ValueError, TypeError) as ve:
-                logger.error(f"Invalid LoanTerms value for {loan_id}: {ve}. Term 'annualinterestrate' was '{annual_interest_rate_str}'. Log index {original_log_index}.")
-                payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Invalid LoanTerms Value"
-                payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+
+                late_fee_percentage_str = loan_terms_s.get("latefeepercentage", str(config.DEFAULT_LATE_FEE_PERCENTAGE))
+                late_fee_percentage = float(late_fee_percentage_str)
+
+                grace_period_days_str = loan_terms_s.get("graceperioddays", str(config.DEFAULT_GRACE_PERIOD_DAYS))
+                grace_period_days = int(grace_period_days_str)
+
+            except (ValueError, TypeError, KeyError) as ve: # Added KeyError
+                logger.error(f"Invalid or missing required value in LoanTerms for {loan_id}: {ve}. Log index {original_log_index}.")
+                df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Invalid LoanTerms Value"
+                df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
                 continue
             
+            # Find target row logic
             target_row_idx = -1
             for i, sr_iter in schedule_df.iterrows():
                 cs = str(sr_iter.get(STATUS_COL_SCHED, "Due")).strip().lower()
-                apds = sr_iter.get(ACTUAL_PMT_DATE_COL_SCHED)
-                if pd.isna(apds) or cs in ["due", "partially paid", ""]: target_row_idx = i; break
+                apds = sr_iter.get(ACTUAL_PMT_DATE_COL_SCHED) # This is already a datetime or NaT
+                if pd.isna(apds) or cs in ["due", "partially paid", ""]:
+                    target_row_idx = i
+                    break
             
-            if target_row_idx == -1:
-                payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - No Due Payment Slot"
-                payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+            if target_row_idx == -1: # No due slot
+                df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - No Due Payment Slot"
+                df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
                 continue
 
-            due_date_dt_sched = schedule_df.loc[target_row_idx, DUE_DATE_COL_SCHED]
+            # Extract data from schedule's target row, with validation
+            due_date_dt_sched = schedule_df.loc[target_row_idx, DUE_DATE_COL_SCHED] # Already datetime or NaT
             if pd.isna(due_date_dt_sched):
-                payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Invalid Sched. DueDate"
-                payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+                df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Invalid Sched. DueDate"
+                df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
                 continue
             due_date_str_sched = due_date_dt_sched.strftime("%Y-%m-%d")
             
-            beginning_balance_for_calc = schedule_df.loc[target_row_idx, BEGIN_BAL_COL_SCHED]
+            beginning_balance_for_calc = schedule_df.loc[target_row_idx, BEGIN_BAL_COL_SCHED] # Already float or NaN
             if pd.isna(beginning_balance_for_calc):
-                payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Invalid Sched. BeginBal"
-                payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+                df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Invalid Sched. BeginBal"
+                df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
                 continue
 
-            scheduled_payment_on_schedule = schedule_df.loc[target_row_idx, SCHED_PMT_COL_SCHED]
+            scheduled_payment_on_schedule = schedule_df.loc[target_row_idx, SCHED_PMT_COL_SCHED] # Already float or NaN
             if pd.isna(scheduled_payment_on_schedule): scheduled_payment_on_schedule = 0.0
 
-            payment_calcs = calculate_payment_details(beginning_balance_for_calc, annual_interest_rate, 30, scheduled_payment_on_schedule, actual_payment_amount_from_log, due_date_str_sched, actual_payment_date_str, late_fee_percentage, grace_period_days)
+            # Call calculation function
+            payment_calcs = calculate_payment_details(
+                beginning_balance_for_calc, annual_interest_rate, 30, 
+                scheduled_payment_on_schedule, actual_payment_amount_from_log,
+                due_date_str_sched, actual_payment_date_str, # actual_payment_date_str from log
+                late_fee_percentage, grace_period_days
+            )
 
-            schedule_df.loc[target_row_idx, ACTUAL_PMT_DATE_COL_SCHED] = pd.to_datetime(actual_payment_date_str)
+            # Update the current row in schedule_df
+            schedule_df.loc[target_row_idx, ACTUAL_PMT_DATE_COL_SCHED] = actual_payment_date_dt # Use datetime object from log
             schedule_df.loc[target_row_idx, ACTUAL_PMT_AMT_COL_SCHED] = actual_payment_amount_from_log
             schedule_df.loc[target_row_idx, INTEREST_PAID_COL_SCHED] = payment_calcs["InterestPaid"]
             schedule_df.loc[target_row_idx, PRINCIPAL_PAID_COL_SCHED] = payment_calcs["PrincipalPaid"]
@@ -252,33 +283,37 @@ def process_payments():
             schedule_df.loc[target_row_idx, ENDING_BAL_COL_SCHED] = payment_calcs["EndingBalance"]
             schedule_df.loc[target_row_idx, STATUS_COL_SCHED] = payment_calcs["Status"]
 
+            # Update BeginningBalance for the next row if applicable
             next_row_idx = target_row_idx + 1
             if next_row_idx < len(schedule_df):
-                is_next_row_paid_off = pd.notna(schedule_df.loc[next_row_idx, ACTUAL_PMT_DATE_COL_SCHED]) and str(schedule_df.loc[next_row_idx, STATUS_COL_SCHED]).lower().startswith("paid")
+                # Check if next row is already paid using its ActualPaymentDate (which is datetime or NaT)
+                is_next_row_paid_off = pd.notna(schedule_df.loc[next_row_idx, ACTUAL_PMT_DATE_COL_SCHED]) and \
+                                     str(schedule_df.loc[next_row_idx, STATUS_COL_SCHED]).lower().startswith("paid")
                 if not is_next_row_paid_off:
                     schedule_df.loc[next_row_idx, BEGIN_BAL_COL_SCHED] = payment_calcs["EndingBalance"]
             
+            # Write schedule_df back using its original headers
             schedule_df_to_write = schedule_df.copy()
             schedule_df_to_write.columns = current_original_schedule_headers
-            # --- End of Amortization Processing Block (Illustrative) ---
+            # --- End of Amortization Processing Block ---
 
             if gutils.update_worksheet_from_df(gs_client, amortization_sheet_id, "Schedule", schedule_df_to_write):
-                payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Processed"
-                payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+                df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Processed"
+                df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now() # Store as datetime
                 logger.info(f"Successfully processed payment for {loan_id} (log index {original_log_index}).")
-            else:
-                payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Amort. Save Fail"
-                payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+            else: # Failed to save amortization sheet
+                df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Amort. Save Fail"
+                df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
 
         except Exception as e: # Catch-all for this specific payment's processing
-            logger.error(f"UNHANDLED EXCEPTION for LoanID {loan_id} (log index {original_log_index}): {e}", exc_info=True)
-            payments_log_df_original_state.loc[original_log_index, original_status_col_name] = "Error - Unhandled Exception"
-            payments_log_df_original_state.loc[original_log_index, original_timestamp_col_name] = datetime.now()
+            logger.error(f"UNHANDLED EXCEPTION during processing of payment for LoanID {loan_id} (log index {original_log_index}): {e}", exc_info=True)
+            df_log_sheet_state.loc[original_log_index, status_col_original_casing] = "Error - Unhandled Exception"
+            df_log_sheet_state.loc[original_log_index, timestamp_col_original_casing] = datetime.now()
         
-    # --- 4. Update Payments Log Sheet ---
-    # At this point, payments_log_df_original_state contains the original key data,
-    # and updated status/timestamp for all rows attempted (either success or specific error).
-    if not gutils.update_worksheet_from_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1", payments_log_df_original_state):
+    # --- 4. Update Payments Log Sheet with ALL statuses ---
+    # df_log_sheet_state now contains the original data for key fields,
+    # and updated status/timestamp for all rows attempted. Its columns are already the original headers.
+    if not gutils.update_worksheet_from_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1", df_log_sheet_state):
         logger.error("CRITICAL: Failed to update the Payments Log sheet with final processing statuses.")
     else:
         logger.info("Payments Log sheet updated with all final statuses.")
