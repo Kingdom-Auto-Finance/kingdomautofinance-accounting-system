@@ -1,113 +1,137 @@
 # src/amortization_calculator.py
 from datetime import datetime, timedelta
 import logging
+import decimal # Use decimal for precise currency calculations
+
+D = decimal.Decimal
+decimal.getcontext().rounding = decimal.ROUND_HALF_UP
 
 logger = logging.getLogger(__name__)
 
-def calculate_payment_details(
-    beginning_balance,
-    annual_interest_rate,
-    payment_frequency_days,
-    scheduled_payment_amount,
-    actual_payment_amount,
-    due_date_str, # Expected as YYYY-MM-DD string
-    actual_payment_date_str, # Expected as YYYY-MM-DD string
-    late_fee_percentage,
-    grace_period_days
+def calculate_principal_and_status(
+    # Inputs expected as standard Python types initially
+    beginning_balance_float,
+    interest_paid_prefilled_float, # The interest amount already in the schedule cell
+    actual_payment_amount_float,
+    due_date_str, # Expected YYYY-MM-DD
+    actual_payment_date_str, # Expected YYYY-MM-DD
+    grace_period_days=3,
+    late_fee_amount_flat=D('25.00')
 ):
-    logger.debug(f"Calculating payment details with: BB={beginning_balance}, APR={annual_interest_rate}, ActualPmt={actual_payment_amount}, DueDate='{due_date_str}', PmtDate='{actual_payment_date_str}'")
+    """
+    Calculates principal paid, late fee charged, ending balance, and status,
+    assuming InterestPaid is PRE-FILLED in the schedule and must be covered first.
+
+    Args:
+        beginning_balance_float (float): Balance at the start of the period (from schedule).
+        interest_paid_prefilled_float (float): The interest amount from the schedule cell.
+        actual_payment_amount_float (float): The actual amount paid by the client.
+        due_date_str (str): Due date in 'YYYY-MM-DD' format.
+        actual_payment_date_str (str): Actual payment date in 'YYYY-MM-DD' format.
+        grace_period_days (int): Number of days after due date before payment is late.
+        late_fee_amount_flat (Decimal): The flat amount charged for a late payment.
+
+    Returns:
+        dict: Contains calculated 'PrincipalPaid', 'LateFee' (charged),
+              'EndingBalance', and 'Status'. Monetary values are Decimals.
+              Returns None if critical input validation fails.
+    """
+    logger.debug(f"Calculating Principal/Status: BB={beginning_balance_float}, PrefilledInterest={interest_paid_prefilled_float}, ActualPmt={actual_payment_amount_float}, Due='{due_date_str}', Paid='{actual_payment_date_str}'")
+
+    # --- Input Validation and Conversion to Decimal ---
     try:
-        # Ensure dates are parsed strictly as YYYY-MM-DD
-        due_date = datetime.strptime(due_date_str, "%Y-%m-%d")
-        actual_payment_date = datetime.strptime(actual_payment_date_str, "%Y-%m-%d")
-    except ValueError as e:
-        logger.error(f"Date parsing error in calculation: DueDate='{due_date_str}', PaymentDate='{actual_payment_date_str}'. Expected YYYY-MM-DD. Error: {e}")
-        raise ValueError(f"Invalid date format for calculation. Expected YYYY-MM-DD. Due: '{due_date_str}', Actual: '{actual_payment_date_str}'.")
+        due_date = datetime.strptime(due_date_str, "%Y-%m-%d").date()
+        actual_payment_date = datetime.strptime(actual_payment_date_str, "%Y-%m-%d").date()
+        
+        beginning_balance = D(str(beginning_balance_float)).quantize(D('0.01'))
+        interest_paid_prefilled = D(str(interest_paid_prefilled_float)).quantize(D('0.01'))
+        actual_payment = D(str(actual_payment_amount_float)).quantize(D('0.01'))
+        
+        grace_days = int(grace_period_days)
+        
+        # Ensure pre-filled interest isn't negative
+        if interest_paid_prefilled < 0:
+             logger.warning(f"Prefilled InterestPaid ({interest_paid_prefilled}) is negative. Treating as 0.00.")
+             interest_paid_prefilled = D('0.00')
+        
+        if beginning_balance < 0:
+             logger.warning(f"Beginning balance {beginning_balance} is negative. Proceeding carefully.")
+             # Calculations might be strange if balance is negative.
 
-    # Ensure numeric types for calculation inputs
-    try:
-        beginning_balance = float(beginning_balance)
-        annual_interest_rate = float(annual_interest_rate)
-        # payment_frequency_days = int(payment_frequency_days) # Already passed as int
-        scheduled_payment_amount = float(scheduled_payment_amount)
-        actual_payment_amount = float(actual_payment_amount)
-        late_fee_percentage = float(late_fee_percentage)
-        grace_period_days = int(grace_period_days)
-    except ValueError as e:
-        logger.error(f"Numeric conversion error in calculation inputs: {e}")
-        raise ValueError(f"Invalid numeric value provided for calculation: {e}")
+    except (ValueError, TypeError, decimal.InvalidOperation) as e:
+        logger.error(f"Input validation/conversion error in calculator: {e}. Inputs: BB={beginning_balance_float}, PrefilledInt={interest_paid_prefilled_float}, ActualPmt={actual_payment_amount_float}, Due='{due_date_str}', Paid='{actual_payment_date_str}'", exc_info=True)
+        return None 
+
+    # --- Determine Lateness and Late Fee ---
+    is_late = actual_payment_date > (due_date + timedelta(days=grace_days))
+    late_fee_charged = D('0.00')
+    if is_late:
+        late_fee_charged = late_fee_amount_flat.quantize(D('0.01'))
+        logger.info(f"Payment is late. Applying ${late_fee_charged} late fee.")
+
+    # --- Allocate Actual Payment ---
+    # Order: Prefilled Interest -> Late Fee (if applicable) -> Principal
     
-    if beginning_balance < 0: # A loan balance typically shouldn't start negative before payment
-        logger.warning(f"Beginning balance {beginning_balance} is negative. Calculations might be unusual.")
-        # Potentially cap at 0 or handle as per business rules if this is possible (e.g. credit balance)
-        # For now, proceed, but this is a flag.
-
-    monthly_interest_rate = annual_interest_rate / 12.0 # Use 12.0 for float division
-    interest_due_this_period = round(beginning_balance * monthly_interest_rate, 2)
-    if interest_due_this_period < 0 : interest_due_this_period = 0.0
-
-    late_fee = 0.0
-    if actual_payment_date > due_date + timedelta(days=grace_period_days):
-        late_fee = round(scheduled_payment_amount * late_fee_percentage, 2)
-
-    payment_remaining_for_interest_principal = actual_payment_amount - late_fee
-    if payment_remaining_for_interest_principal < 0:
-        payment_remaining_for_interest_principal = 0.0
-
-    interest_paid = min(payment_remaining_for_interest_principal, interest_due_this_period)
+    payment_available = actual_payment
     
-    payment_remaining_for_principal = payment_remaining_for_interest_principal - interest_paid
-    if payment_remaining_for_principal < 0:
-        payment_remaining_for_principal = 0.0
-
-    principal_paid = min(payment_remaining_for_principal, beginning_balance)
-    # Ensure principal paid does not make ending balance unnecessarily negative if loan is small
-    if beginning_balance - principal_paid < -0.005: # allowing for small float inaccuracies
-        principal_paid = beginning_balance # Max principal is current balance
-
-    ending_balance = round(beginning_balance - principal_paid, 2)
+    # 1. Cover Prefilled Interest
+    # We assume the payment *must* cover this pre-filled amount if possible.
+    # The actual amount *allocated* to interest from the payment is capped by the payment itself.
+    interest_covered_by_payment = min(payment_available, interest_paid_prefilled)
+    payment_available -= interest_covered_by_payment
     
-    # Status determination
+    # 2. Cover Late Fee (if applicable)
+    late_fee_covered_by_payment = D('0.00')
+    if is_late:
+        late_fee_covered_by_payment = min(payment_available, late_fee_charged)
+        payment_available -= late_fee_covered_by_payment
+
+    # 3. Allocate Remainder to Principal
+    # Principal paid is whatever is left, but capped at the beginning balance.
+    principal_paid = min(payment_available, beginning_balance) 
+    if beginning_balance - principal_paid < D('-0.005'): # Avoid over-reducing balance
+        principal_paid = beginning_balance
+
+    # --- Calculate Ending Balance ---
+    # Ending Balance = Beginning Balance - Principal Paid
+    ending_balance = (beginning_balance - principal_paid).quantize(D('0.01'))
+    if ending_balance <= D('0.005') and principal_paid >= D('0.00'): # If paid off or negligible balance
+        ending_balance = D('0.00')
+
+    # --- Determine Status ---
     status = "Paid"
-    if actual_payment_date > due_date + timedelta(days=grace_period_days):
+    if is_late:
         status = "Paid Late"
+
+    # Check for partial payment - did the payment cover the mandatory amounts (prefilled interest + fees)?
+    mandatory_coverage = interest_paid_prefilled + late_fee_charged
     
-    # Check for partial payment against scheduled amount + applicable fees
-    expected_total_due = scheduled_payment_amount
-    if actual_payment_date > due_date + timedelta(days=grace_period_days): # If late, fee is part of expected
-        expected_total_due_with_fees = scheduled_payment_amount + round(scheduled_payment_amount * late_fee_percentage, 2)
-    else:
-        expected_total_due_with_fees = scheduled_payment_amount
-
-    # A payment is "Partially Paid" if it's less than what was scheduled (or scheduled + fees if late), AND a balance remains.
-    # However, if the payment clears the loan (ending_balance is 0), it's not "Partially Paid".
-    if actual_payment_amount < expected_total_due_with_fees and ending_balance > 0.005: # Use small tolerance for float comparison
+    if actual_payment < mandatory_coverage and ending_balance > D('0.00'):
+        # Didn't even cover mandatory interest/fees, definitely partial
         status = "Partially Paid"
-        if actual_payment_date > due_date + timedelta(days=grace_period_days):
-            status += " & Late"
-    elif ending_balance <= 0.005 and principal_paid > 0: # Loan paid off (or very tiny residual due to float)
+        if is_late: status += " & Late"
+    elif actual_payment >= mandatory_coverage and principal_paid <= D('0.00') and ending_balance > D('0.00'):
+        # Covered interest/fees but no principal was paid (or needed), and balance remains
+        # This could be considered partial if principal reduction was expected.
+        # Let's refine: if BB > 0 and no principal paid, consider it partial.
+        if beginning_balance > D('0.00'):
+            status = "Partially Paid (Interest Only)" # More specific status
+            if is_late: status = "Partially Paid (Interest Only) & Late"
+    elif ending_balance == D('0.00'):
+        # Loan is paid off
         status = "Paid Off"
-        if actual_payment_date > due_date + timedelta(days=grace_period_days):
-            status = "Paid Off Late"
-        if ending_balance < -0.005: # Indicates an overpayment beyond payoff
-            logger.info(f"Loan paid off with an overpayment. Ending balance was {ending_balance}, principal paid {principal_paid}.")
-            # Here you could set credit_applied = abs(ending_balance)
-            # For simplicity, we are just ensuring ending_balance is not negative.
-        ending_balance = 0.0 # Ensure it's exactly zero if paid off
-
-
-    credit_applied = 0.0 # Placeholder, implement if overpayments beyond payoff need to be tracked as credit
-
+        if is_late: status = "Paid Off Late"
+            
     logger.debug(
-        f"Calculated Details: IntDue={interest_due_this_period:.2f}, IntPaid={interest_paid:.2f}, PrincPaid={principal_paid:.2f}, "
-        f"LateFee={late_fee:.2f}, EndBal={ending_balance:.2f}, Status='{status}'"
+        f"Calculation Results: PrefilledInt={interest_paid_prefilled}, PrincPaid={principal_paid}, "
+        f"LateFeeCharged={late_fee_charged}, EndBal={ending_balance}, Status='{status}'"
     )
 
+    # Return values needed to update the schedule
+    # Note: We DO NOT return 'InterestPaid' as it's pre-filled and should not be overwritten.
     return {
-        "InterestPaid": interest_paid,
-        "PrincipalPaid": principal_paid,
-        "LateFee": late_fee,
-        "CreditApplied": credit_applied,
-        "EndingBalance": ending_balance,
-        "Status": status,
+        "PrincipalPaid": principal_paid,    # Amount of payment allocated to principal
+        "LateFee": late_fee_charged,       # The fee AMOUNT assessed ($25 or $0)
+        "EndingBalance": ending_balance,   # Remaining balance after payment
+        "Status": status,                   # Final status
     }
