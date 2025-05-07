@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import sys
+from flask import Flask, request
 
 # --- Path setup for executing as a module or script ---
 # This ensures that 'from . import config' works whether run as 'python -m src.main'
@@ -49,26 +50,34 @@ logging.basicConfig(
 # Get a logger for this module
 module_logger = logging.getLogger(__name__)
 
+# --- CREATE FLASK APP ---
+app = Flask(__name__)
 
-# --- Google Cloud Function Entry Point ---
-def automated_kaf_run(event, context): # Standard GCF signature (event, context can be auto-provided)
+# --- Google Cloud Function Entry Point (as an HTTP route) ---
+@app.route('/', methods=['GET', 'POST']) # <--- DEFINE AN HTTP ROUTE
+def automated_kaf_run_http(): # Renamed for clarity as an HTTP handler
     """
-    Entry point for Google Cloud Function triggered by Cloud Scheduler or HTTP.
-    'event' and 'context' are provided by the trigger, can be inspected if needed.
+    HTTP endpoint for Google Cloud Function triggered by Cloud Scheduler or HTTP.
     """
-    module_logger.info("Cloud Function: automated_kaf_run triggered.")
-    module_logger.info(f"Event data: {event}")
-    module_logger.info(f"Context data: {context}")
+    # For Pub/Sub triggers (if you switch later), you'd decode event['data']
+    # For HTTP, you can inspect request object if needed (e.g., request.get_json(), request.args)
+    # For a simple trigger like from Cloud Scheduler GET, no specific payload is usually needed.
+
+    module_logger.info("Cloud Function HTTP Endpoint: automated_kaf_run_http triggered.")
+    module_logger.info(f"Request method: {request.method}")
+    # You can log headers or body if debugging:
+    # module_logger.info(f"Request headers: {request.headers}")
+    # if request.data:
+    #    module_logger.info(f"Request data: {request.data.decode('utf-8')}")
+
+
     try:
         process_payments() # Call your main payment processing logic
         module_logger.info("Cloud Function: process_payments completed successfully.")
-        # GCF HTTP functions should return a response
         return ("Payment processing completed successfully.", 200)
     except Exception as e:
         module_logger.error(f"Cloud Function: Error during process_payments: {e}", exc_info=True)
-        # GCF HTTP functions should return an error response
         return (f"Error during payment processing: {str(e)}", 500)
-
 
 # --- Command-Line Interface (CLI) ---
 def cli_main():
@@ -103,6 +112,13 @@ def cli_main():
 
 
 if __name__ == "__main__":
-    # This block runs if the script is executed directly (e.g., python src/main.py process)
-    # OR if run as a module (e.g., python -m src.main process)
-    cli_main()
+    # This block is for CLI execution OR local Flask development server
+    if len(sys.argv) > 1 and sys.argv[1] in ['process', 'report']:
+        # If 'process' or 'report' is passed, assume CLI execution
+        cli_main()
+    else:
+        # Otherwise, run the Flask development server locally if script is run directly
+        # This is for local testing of the HTTP endpoint
+        port = int(os.environ.get("PORT", 8080)) # Get PORT from environment or default
+        module_logger.info(f"Starting Flask development server on port {port}...")
+        app.run(debug=True, host='0.0.0.0', port=port)

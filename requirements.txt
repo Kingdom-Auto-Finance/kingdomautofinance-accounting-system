@@ -35,4 +35,5 @@ gspread
 google-auth
 oauth2client
 google-cloud-secret-manager
+Flask
 # any other direct dependencies if you added them
