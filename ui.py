@@ -6,8 +6,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import streamlit as st
 
-# Load configuration
-from src.config import load_config
+# Load configuration (support load_config or get_config)
+try:
+    from src.config import load_config
+except ImportError:
+    from src.config import get_config as load_config
+
+# Initialize configuration
 config = load_config()
 
 # Import core functions
