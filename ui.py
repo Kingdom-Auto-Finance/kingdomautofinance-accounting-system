@@ -98,7 +98,7 @@ st.markdown("## Daily Summary")
 col1, col2 = st.columns([3,1])
 with col1:
     if st.button("Generate Daily Summary"):
-        raw, log = run_command([sys.executable, "-m", "src.main", "daily", "summary", "--csv"])
+        raw, log = run_command([sys.executable, "-m", "src.main", "daily_summary"])
         st.session_state['last_log'] = log
         csv_data = parse_csv(raw)
         if csv_data:
@@ -129,7 +129,7 @@ with col3:
     if st.button("Generate Report"):
         raw, log = run_command([
             sys.executable, "-m", "src.main", "report",
-            start_date.isoformat(), end_date.isoformat(), "--csv"
+            start_date.isoformat(), end_date.isoformat(),
         ])
         st.session_state['last_log'] = log
         csv_data = parse_csv(raw)
