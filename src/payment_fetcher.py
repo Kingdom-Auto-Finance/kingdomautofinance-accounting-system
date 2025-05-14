@@ -39,13 +39,13 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
     logger.info(f"Starting payment fetch. Mode: {run_mode_log}")
     
     gs_client = None
-    try: gs_client = gutils.get_gspread_client()
+    try: gs_client = safe_gspread_request(gutils.get_gspread_client)
     except ConnectionError as e: logger.error(f"Failed GS client init: {e}. Aborting fetch."); return False
 
     # --- 1. Read Source Sheet ---
     source_sheet_id = config.SOURCE_PAYMENTS_SHEET_ID
     logger.info(f"Reading source payment data from Sheet ID: {source_sheet_id}, Tab: '{SOURCE_SHEET_TAB_NAME}'")
-    df_source = gutils.get_sheet_as_df(gs_client, source_sheet_id, SOURCE_SHEET_TAB_NAME) 
+    df_source = safe_gspread_request(lambda: gutils.get_sheet_as_df(gs_client, source_sheet_id, SOURCE_SHEET_TAB_NAME))
     
     if df_source is None or df_source.empty:
         logger.warning(f"Source payment sheet ('{SOURCE_SHEET_TAB_NAME}' tab) empty/unreadable.")
@@ -62,7 +62,7 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
     target_sheet_id = config.PAYMENTS_LOG_SHEET_ID
     target_sheet_name = "Sheet1" # Assume target log is always Sheet1
     logger.info(f"Reading target log from Sheet ID: {target_sheet_id}, Tab: '{target_sheet_name}' for duplicate check.")
-    df_target_log_raw = gutils.get_sheet_as_df(gs_client, target_sheet_id, target_sheet_name)
+    df_target_log_raw = safe_gspread_request(lambda: gutils.get_sheet_as_df(gs_client, target_sheet_id, target_sheet_name))
 
     existing_payments = set() # Stores unique keys: LOANIDUPPER_YYYY-MM-DD_AmountString(XX.XX)
     if df_target_log_raw is not None and not df_target_log_raw.empty:
