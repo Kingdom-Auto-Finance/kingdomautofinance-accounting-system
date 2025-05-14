@@ -65,9 +65,27 @@ if 'last_log' not in st.session_state:
 
 # Function to parse CSV from raw stdout (ignore non-CSV lines)
 def parse_csv(raw):
+    """
+    Extracts the first CSV block (header + rows) from mixed stdout.
+    """
     lines = raw.splitlines()
-    # assume header contains at least one comma
-    csv_lines = [line for line in lines if ',' in line]
+    csv_start = None
+    csv_end = None
+    # Find header (first line with at least one comma)
+    for i, line in enumerate(lines):
+        if ',' in line:
+            csv_start = i
+            break
+    if csv_start is None:
+        return ''
+    # Find where CSV ends (first blank or non-comma line after header)
+    for j in range(csv_start + 1, len(lines)):
+        if not lines[j].strip() or ',' not in lines[j]:
+            csv_end = j
+            break
+    if csv_end is None:
+        csv_end = len(lines)
+    csv_lines = lines[csv_start:csv_end]
     return '\n'.join(csv_lines)
 
 # Section: Process Schedules
