@@ -175,11 +175,20 @@ def process_payments():
         grace_period_days = config.DEFAULT_GRACE_PERIOD_DAYS
         flat_late_fee = Decimal('25.00')
 
-        try: # Read sheet data and terms ONCE per loan
-            logger.debug(f"Reading amortization data for {loan_id_internal}")
-            loan_terms_df_raw = safe_gspread_request(lambda: gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "LoanTerms"))
-schedule_df_raw = safe_gspread_request(lambda: gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "Schedule"))
-            if schedule_df_raw is None or schedule_df_raw.empty: raise ValueError("Schedule sheet empty or unreadable.")
+try:
+    loan_terms_df_raw = safe_gspread_request(
+        lambda: gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "LoanTerms")
+    )
+    schedule_df_raw = safe_gspread_request(
+        lambda: gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "Schedule")
+    )
+except Exception as loan_read_error:
+    logger.error(f"Error preparing amortization data for LoanID {loan_id_internal}: {loan_read_error}", exc_info=True)
+    loan_processing_failed_early = True
+    for item in payment_items_for_loan: 
+        df_log_sheet_state.loc[item['original_index'], status_col_original_casing] = "Error - Amort. Read/Init Fail"
+        df_log_sheet_state.loc[item['original_index'], timestamp_col_original_casing] = datetime.now()
+    continue
 
             # Parse Loan Terms minimally if sheet exists
             if loan_terms_df_raw is not None and not loan_terms_df_raw.empty:
