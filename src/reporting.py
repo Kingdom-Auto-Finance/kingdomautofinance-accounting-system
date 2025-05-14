@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def generate_period_report(start_date_str, end_date_str):
     logger.info(f"Generating financial report for period: {start_date_str} to {end_date_str}")
     gs_client = None
-    try: gs_client = safe_gspread_request(gutils.get_gspread_client)
+    try: gs_client = gutils.get_gspread_client()
     except ConnectionError as e: logger.error(f"No GS client for reporting: {e}. Aborting."); return {"error": "Failed GS Client", "total_principal": 0, "total_interest": 0, "total_fees": 0, "detailed_data": []} 
 
     # --- Parse Report Dates ---
@@ -30,7 +30,7 @@ def generate_period_report(start_date_str, end_date_str):
          logger.error("AMORTIZATION_SCHEDULES_FOLDER_ID not configured."); return {"error": "Folder not configured", "total_principal": 0, "total_interest": 0, "total_fees": 0, "detailed_data": []}
 
     # Use imported function from gutils
-    loan_ids_to_report = safe_gspread_request(lambda: gutils.get_loan_ids_from_drive_folder(folder_id))
+    loan_ids_to_report = get_loan_ids_from_drive_folder(folder_id) 
     if not loan_ids_to_report: logger.warning("No LoanIDs found from Drive folder."); return {"total_principal": 0, "total_interest": 0, "total_fees": 0, "detailed_data": []} 
 
     # --- Initialize Aggregators ---
@@ -40,13 +40,13 @@ def generate_period_report(start_date_str, end_date_str):
     # --- Iterate Through Loans ---
     for loan_id in loan_ids_to_report:
         # Use imported function from gutils
-        sheet_id = safe_gspread_request(lambda: gutils.find_sheet_id_by_loan_id_in_folder(loan_id))
+        sheet_id = find_sheet_id_by_loan_id_in_folder(loan_id) 
         if not sheet_id: logger.warning(f"Skipping LoanID '{loan_id}' (sheet not found)."); continue 
 
         logger.debug(f"Processing report data for LoanID: {loan_id}, SheetID: {sheet_id}")
         
         # Use imported function from gutils
-        schedule_df_raw = safe_gspread_request(lambda: gutils.get_sheet_as_df(gs_client, sheet_id, "Schedule"))
+        schedule_df_raw = get_sheet_as_df(gs_client, sheet_id, "Schedule") 
         if schedule_df_raw is None or schedule_df_raw.empty: logger.warning(f"Empty/unreadable schedule for {loan_id}."); continue
         
         schedule_df = schedule_df_raw.copy()

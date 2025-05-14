@@ -37,13 +37,13 @@ def safe_string_to_decimal(value_str, context=""):
 def process_payments():
     logger.info("Starting payment processing (handling commas, using pre-filled interest, batching)...")
     gs_client = None
-    try: gs_client = safe_gspread_request(gutils.get_gspread_client)
+    try: gs_client = gutils.get_gspread_client()
     except ConnectionError as e: logger.error(f"CRITICAL: No GS client: {e}. Aborting."); return
-    try: safe_gspread_request(gutils.get_drive_service) 
+    try: gutils.get_drive_service() 
     except ConnectionError as e: logger.warning(f"Could not init Drive client: {e}.")
 
     # --- 1. Read Payments Log and Prepare ---
-    df_log_sheet_state = safe_gspread_request(lambda: gutils.get_sheet_as_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1"))
+    df_log_sheet_state = gutils.get_sheet_as_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1")
     if df_log_sheet_state is None or df_log_sheet_state.empty: logger.info("Payments log empty/unreadable."); return
 
     original_log_headers = df_log_sheet_state.columns.tolist()
@@ -145,7 +145,7 @@ def process_payments():
         logger.info("No valid payments found to attempt processing after validation.")
         if rows_with_initial_errors: 
             logger.info("Writing back payments log with parsing error statuses...")
-            if not safe_gspread_request(lambda: gutils.update_worksheet_from_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1", df_log_sheet_state)): logger.error("CRITICAL: Failed update Payments Log...")
+            if not gutils.update_worksheet_from_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1", df_log_sheet_state): logger.error("CRITICAL: Failed update Payments Log...")
             else: logger.info("Payments Log sheet updated with parsing errors.")
         return
         
@@ -160,7 +160,7 @@ def process_payments():
         loan_id_original_case = payment_items_for_loan[0]['loan_id_orig'] # Get original casing from first item
         logger.info(f"--- Processing {len(payment_items_for_loan)} payment(s) for LoanID: {loan_id_original_case} ---")
         
-        amortization_sheet_id = safe_gspread_request(lambda: gutils.find_sheet_id_by_loan_id_in_folder(loan_id_original_case))
+        amortization_sheet_id = gutils.find_sheet_id_by_loan_id_in_folder(loan_id_original_case)
         if not amortization_sheet_id:
             logger.error(f"Amort. Sheet ID for '{loan_id_original_case}' not found. Marking payments as error.")
             for item in payment_items_for_loan: 
@@ -175,20 +175,11 @@ def process_payments():
         grace_period_days = config.DEFAULT_GRACE_PERIOD_DAYS
         flat_late_fee = Decimal('25.00')
 
-try:
-    loan_terms_df_raw = safe_gspread_request(
-        lambda: gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "LoanTerms")
-    )
-    schedule_df_raw = safe_gspread_request(
-        lambda: gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "Schedule")
-    )
-except Exception as loan_read_error:
-    logger.error(f"Error preparing amortization data for LoanID {loan_id_internal}: {loan_read_error}", exc_info=True)
-    loan_processing_failed_early = True
-    for item in payment_items_for_loan: 
-        df_log_sheet_state.loc[item['original_index'], status_col_original_casing] = "Error - Amort. Read/Init Fail"
-        df_log_sheet_state.loc[item['original_index'], timestamp_col_original_casing] = datetime.now()
-    continue
+        try: # Read sheet data and terms ONCE per loan
+            logger.debug(f"Reading amortization data for {loan_id_internal}")
+            loan_terms_df_raw = gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "LoanTerms")
+            schedule_df_raw = gutils.get_sheet_as_df(gs_client, amortization_sheet_id, "Schedule")
+            if schedule_df_raw is None or schedule_df_raw.empty: raise ValueError("Schedule sheet empty or unreadable.")
 
             # Parse Loan Terms minimally if sheet exists
             if loan_terms_df_raw is not None and not loan_terms_df_raw.empty:
@@ -335,7 +326,7 @@ except Exception as loan_read_error:
         
     # --- 4. Update Payments Log Sheet ---
     logger.info("Attempting final update of Payments Log sheet...")
-    if not safe_gspread_request(lambda: gutils.update_worksheet_from_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1", df_log_sheet_state)): # Use the original state df
+    if not gutils.update_worksheet_from_df(gs_client, config.PAYMENTS_LOG_SHEET_ID, "Sheet1", df_log_sheet_state): # Use the original state df
         logger.error("CRITICAL: Failed to update the Payments Log sheet with final processing statuses.")
     else:
         logger.info("Payments Log sheet updated with all final statuses.")

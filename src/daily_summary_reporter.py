@@ -26,7 +26,7 @@ def generate_and_update_daily_summary(full_rebuild=False): # Argument added, def
 
     # --- Initialize Google Sheets Client ---
     gs_client = None
-    try: gs_client = safe_gspread_request(gutils.get_gspread_client)
+    try: gs_client = gutils.get_gspread_client()
     except ConnectionError as e: logger.error(f"Failed GS client init: {e}. Aborting."); return False
 
     target_sheet_id = config.DAILY_SUMMARY_REPORT_SHEET_ID
@@ -40,7 +40,7 @@ def generate_and_update_daily_summary(full_rebuild=False): # Argument added, def
     # --- Try to Read Existing Report (only if NOT doing full rebuild) ---
     if not full_rebuild:
         logger.info(f"Attempting incremental update. Reading existing summary from Sheet ID: {target_sheet_id}")
-        df_existing_report_raw = safe_gspread_request(lambda: gutils.get_sheet_as_df(gs_client, target_sheet_id, target_sheet_name))
+        df_existing_report_raw = gutils.get_sheet_as_df(gs_client, target_sheet_id, target_sheet_name)
         
         if df_existing_report_raw is not None and not df_existing_report_raw.empty:
             # Check if the essential 'Date' column exists
@@ -71,15 +71,15 @@ def generate_and_update_daily_summary(full_rebuild=False): # Argument added, def
     # --- 1. Get Loan IDs (Required for both modes) ---
     folder_id = config.AMORTIZATION_SCHEDULES_FOLDER_ID
     if not folder_id or folder_id == "YOUR_GOOGLE_DRIVE_FOLDER_ID_HERE": logger.error("Amortization folder ID not configured."); return False
-    loan_ids_to_process = safe_gspread_request(lambda: gutils.get_loan_ids_from_drive_folder(folder_id))
+    loan_ids_to_process = get_loan_ids_from_drive_folder(folder_id) 
     if not loan_ids_to_process: logger.warning("No LoanIDs found."); return False # Nothing to process
 
     # --- 2. Read Data from All Schedules (Required for both modes) ---
     logger.info(f"Reading schedule data for {len(loan_ids_to_process)} loans...")
     for loan_id in loan_ids_to_process:
-        sheet_id = safe_gspread_request(lambda: gutils.find_sheet_id_by_loan_id_in_folder(loan_id))
+        sheet_id = find_sheet_id_by_loan_id_in_folder(loan_id) 
         if not sheet_id: logger.warning(f"Skipping LoanID '{loan_id}' (sheet not found)."); continue 
-        schedule_df_raw = safe_gspread_request(lambda: gutils.get_sheet_as_df(gs_client, sheet_id, "Schedule"))
+        schedule_df_raw = get_sheet_as_df(gs_client, sheet_id, "Schedule") 
         if schedule_df_raw is None or schedule_df_raw.empty: logger.warning(f"Empty/unreadable schedule for {loan_id}."); continue
         
         schedule_df = schedule_df_raw.copy()
