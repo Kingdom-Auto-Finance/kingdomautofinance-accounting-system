@@ -20,7 +20,7 @@ AMORTIZATION_SCHEDULES_FOLDER_ID = "1u5nAuQVIRosLsZgPPuPLmRriGRyQf60s"
 
 # --- Secret Manager ---
 # Replace with your actual Secret Resource Name from Google Cloud Secret Manager
-SERVICE_ACCOUNT_SECRET_RESOURCE_NAME = "projects/544331774603/secrets/kaf-service-account-key/versions/latest"
+SERVICE_ACCOUNT_SECRET_RESOURCE_NAME = "projects/544331774603/secrets/kaf-service-account-key/versions/2"
 
 # --- Local Paths (mainly for logs) ---
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
