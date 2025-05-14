@@ -8,8 +8,6 @@ from googleapiclient.errors import HttpError
 import json 
 import logging 
 import time 
-import gspread
-from gspread.exceptions import APIError
 from decimal import Decimal, InvalidOperation 
 from datetime import datetime, date 
 
@@ -18,34 +16,6 @@ from . import config
 logger = logging.getLogger(__name__)
 drive_service_client = None 
 gspread_authorized_client = None 
-
-# --- Create a Safe Request Function ---
-def safe_gspread_request(request_function, max_retries=5):
-    """
-    Executes a Google Sheets request safely using exponential backoff.
-
-    Args:
-        request_function (callable): The Google Sheets API call as a function.
-        max_retries (int): Maximum number of retries before failing.
-
-    Returns:
-        Result of the request_function() if successful.
-
-    Raises:
-        Exception if maximum retries exceeded.
-    """
-    for attempt in range(max_retries):
-        try:
-            return request_function()
-        except APIError as e:
-            if '429' in str(e):
-                wait_seconds = 2 ** attempt
-                logger.warning(f"Quota exceeded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_seconds} seconds...")
-                time.sleep(wait_seconds)
-            else:
-                logger.error(f"APIError: {e}")
-                raise e  # Other API errors should not retry
-    raise Exception("Exceeded maximum retries for Google Sheets API requests.")
 
 # --- Helper function to clean/convert currency strings to float ---
 def safe_string_to_float(value_str, context=""):
