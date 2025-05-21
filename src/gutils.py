@@ -11,7 +11,7 @@ import time
 from decimal import Decimal, InvalidOperation 
 from datetime import datetime, date 
 
-from . import config 
+import config 
 
 logger = logging.getLogger(__name__)
 drive_service_client = None 

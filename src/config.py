@@ -46,4 +46,17 @@ if not os.path.exists(LOG_DIR):
 
 # --- Default Financial Parameters ---
 DEFAULT_LATE_FEE_PERCENTAGE = 0.05
-DEFAULT_GRACE_PERIOD_DAYS = 5
+DEFAULT_GRACE_PERIOD_DAYS = 3
+
+# Supabase configuration
+SUPABASE_URL = "https://puwcyhbjchkfvvaccacg.supabase.co"
+SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME = "projects/544331774603/secrets/supabase-service-role-key/versions/1"
+SUPABASE_KEY_SECRET_NAME = "projects/544331774603/secrets/supabase-service-role-key/versions/1"
+
+from decimal import Decimal as D
+
+# Flat late fee per late payment
+DEFAULT_LATE_FEE = D("25.00")
+
+# Table in Supabase that tracks all loan IDs
+LOANS_TABLE = "loans"

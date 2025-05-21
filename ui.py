@@ -1,169 +1,259 @@
+import streamlit as st
+import subprocess
+import pandas as pd
+import io
 import os
 import sys
-import subprocess
-import streamlit as st
-from datetime import date
-import io
-import pandas as pd
+import re  # already in place
 
-# Add src directory to Python path
-project_root = os.path.dirname(__file__)
-src_path = os.path.join(project_root, 'src')
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+# === Helper to run shell commands ===
+def run_cmd(cmd):
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out, err = proc.communicate()
+    return out, err
 
-# Page configuration: centered layout
-st.set_page_config(page_title="Amortization Schedules", layout="centered")
+# === Helper to extract the first contiguous CSV block from mixed stdout ===
+def extract_csv(raw: str) -> str:
+    lines = raw.splitlines()
+    header_idx = next((i for i, l in enumerate(lines) if "," in l and " " not in l), None)
+    if header_idx is None:
+        return ""
+    comma_count = lines[header_idx].count(",")
+    block = [lines[header_idx]]
+    for l in lines[header_idx + 1:]:
+        if l.count(",") != comma_count or " " in l:
+            break
+        block.append(l)
+    return "\n".join(block)
 
-# Custom branding CSS
+# === Streamlit page configuration ===
+st.set_page_config(page_title="Kingdom Accounting System", layout="centered")
+
+# === Custom CSS for styling ===
 st.markdown(
-    '''
+    """
     <style>
-    .css-18e3th9 {background-color: #F7F9FB; max-width: 800px; margin: auto;}  /* center content */
-    .stButton>button, .stDownloadButton>button {
-        background-color: #005EB8;
-        color: white;
-        border-radius: 8px;
-        padding: .6em 1.2em;
-        font-weight: 600;
+    body, .main .block-container { background-color: #F7F9FB; }
+    .main .block-container { max-width: 800px; margin: auto; padding: 20px; }
+    .stButton > button { width: 100%; margin: 5px 0; }
+    .stColumns > div:nth-child(2) .stButton > button {
+        background: none !important;
+        border: none !important;
+        padding: 0.2rem;
+        min-width: 2rem;
+        font-size: 1.2rem;
     }
-    .stButton>button:hover, .stDownloadButton>button:hover {
-        background-color: #004A99;
+    .log-box {
+        background-color: #e8f1f8;
+        color: #0B1E3F;
+        padding: 10px;
+        border-radius: 4px;
+        margin: 10px 0;
+        font-family: monospace;
+        white-space: pre-wrap;
     }
-    .stImage img {border-radius: 8px;}
-    h1 {color: #005EB8;}
-    h2, h3 {color: #333333;}
-    .stMarkdown h2 {margin-top: 1.5em;}
+    img { display: block; margin: auto; }
     </style>
-    ''',
+    """,
     unsafe_allow_html=True
 )
 
-# Logo and Title
+# === Branding Header ===
 logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Auto-Finance-Logo-Blue_1@4x.png"
-st.image(logo_url, width=200)
-st.markdown("<h1 style='text-align:center;'>Amortization Schedules</h1>", unsafe_allow_html=True)
-st.markdown("<h3 style='text-align:center;'>Run amortization tasks quickly using the buttons below</h3>", unsafe_allow_html=True)
+st.image(logo_url, width=250)
+st.markdown("<h1 style='text-align:center'>Kingdom Accounting System</h1>", unsafe_allow_html=True)
 
-# Helper to run commands: return raw stdout and full log
+# === Initialize session state for logs ===
+for sec in ["import", "fetch", "process", "daily", "report"]:
+    st.session_state.setdefault(f"show_{sec}_log", False)
+    st.session_state.setdefault(f"{sec}_log", "")
 
-def run_command(cmd):
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        stdout = result.stdout or ''
-        stderr = result.stderr or ''
-        full_log = stdout + ('\n' + stderr if stderr else '')
-        return stdout, full_log
-    except Exception as e:
-        return '', str(e)
-
-# Initialize session state
-if 'last_csv' not in st.session_state:
-    st.session_state['last_csv'] = ''
-if 'last_log' not in st.session_state:
-    st.session_state['last_log'] = ''
-
-# Function to parse CSV from raw stdout (ignore non-CSV lines)
-def parse_csv(raw):
-    """
-    Extracts the first CSV block (header + rows) from mixed stdout.
-    """
-    lines = raw.splitlines()
-    csv_start = None
-    csv_end = None
-    # Find header (first line with at least one comma)
-    for i, line in enumerate(lines):
-        if ',' in line:
-            csv_start = i
-            break
-    if csv_start is None:
-        return ''
-    # Find where CSV ends (first blank or non-comma line after header)
-    for j in range(csv_start + 1, len(lines)):
-        if not lines[j].strip() or ',' not in lines[j]:
-            csv_end = j
-            break
-    if csv_end is None:
-        csv_end = len(lines)
-    csv_lines = lines[csv_start:csv_end]
-    return '\n'.join(csv_lines)
-
-# Section: Process Schedules
-st.markdown("## Process Schedules")
-col1, col2 = st.columns(2)
+# ----- Section: Import Amortization Spreadsheets -----
+col1, col2 = st.columns([10, 1])
 with col1:
-    if st.button("Process Only New Schedules"):
-        raw, log = run_command([sys.executable, "-m", "src.main", "process"])
-        st.session_state['last_log'] = log
-        # show only summary line if present (no CSV expected)
-        if raw:
-            st.success(raw)
+    st.header("Import Amortization Spreadsheets")
 with col2:
-    if st.button("Process All Schedules"):
-        raw, log = run_command([sys.executable, "-m", "src.main", "fetch_payments", "-all"])
-        st.session_state['last_log'] = log
-        if raw:
-            st.success(raw)
-# Log toggle
-af_log = st.button("📝 Show Log", key="log_process")
-if af_log and st.session_state['last_log']:
-    st.info(st.session_state['last_log'])
+    if st.button("📝", key="log_import"):
+        st.session_state["show_import_log"] = not st.session_state["show_import_log"]
 
-st.markdown("---")
+if st.button("Import Sheets from Google Drive"):
+    with st.spinner("Importing sheets from Google Drive…"):
+        out, err = run_cmd("python src/bootstrap.py")
+    st.session_state["import_log"] = out + ("\n" + err if err else "")
+    st.success("Import completed." if out or err else "No output.")
 
-# Section: Daily Summary
-st.markdown("## Daily Summary")
-col1, col2 = st.columns([3,1])
+if st.session_state["show_import_log"]:
+    st.markdown(f"<div class='log-box'>{st.session_state['import_log']}</div>", unsafe_allow_html=True)
+
+# ----- Section: Fetch Payments -----
+col1, col2 = st.columns([10, 1])
 with col1:
-    if st.button("Generate Daily Summary"):
-        raw, log = run_command([sys.executable, "-m", "src.main", "daily_summary"])
-        st.session_state['last_log'] = log
-        csv_data = parse_csv(raw)
-        if csv_data:
-            st.session_state['last_csv'] = csv_data
-            df = pd.read_csv(io.StringIO(csv_data))
-            st.dataframe(df)
+    st.header("Fetch Payments")
 with col2:
-    if st.session_state['last_csv']:
+    if st.button("📝", key="log_fetch"):
+        st.session_state["show_fetch_log"] = not st.session_state["show_fetch_log"]
+
+if st.button("Fetch Recent Payments (7 days)"):
+    with st.spinner("Fetching recent payments…"):
+        out, err = run_cmd("python src/main.py fetch_payments --recent 7")
+    st.session_state["fetch_log"] = out + ("\n" + err if err else "")
+    st.success("Fetched recent payments.")
+
+if st.button("Fetch Payments (All Time)"):
+    with st.spinner("Fetching all payments…"):
+        out, err = run_cmd("python src/main.py fetch_payments --all")
+    st.session_state["fetch_log"] = out + ("\n" + err if err else "")
+    st.success("Fetched all payments.")
+
+if st.session_state["show_fetch_log"]:
+    st.markdown(f"<div class='log-box'>{st.session_state['fetch_log']}</div>", unsafe_allow_html=True)
+
+# ----- Section: Process Payments -----
+col1, col2 = st.columns([10, 1])
+with col1:
+    st.header("Process Payments")
+with col2:
+    if st.button("📝", key="log_process"):
+        st.session_state["show_process_log"] = not st.session_state["show_process_log"]
+
+if st.button("Process Payments"):
+    with st.spinner("Processing payments…"):
+        out, err = run_cmd("python src/main.py process")
+    st.session_state["process_log"] = out + ("\n" + err if err else "")
+    st.success("Process completed.")
+    # Warning for any missing amortization schedules
+    if "HTTP/2 404 Not Found" in out:
+        # match every word after “The” and before “doesn't have an amortization schedule”
+        ids = re.findall(
+            r"The\s+([0-9A-Za-z]+)\s+doesn't have an amortization schedule",
+            out
+        )
+        unique_ids = sorted(set(ids)) if ids else []
+        if unique_ids:
+            joined = ", ".join(f"`{i}`" for i in unique_ids)
+            st.warning(f"The following loan IDs don’t have an amortization schedule yet: {joined}. Please review.")
+        else:
+            st.warning("Some payments found don’t have an amortization schedule yet. Please review.")
+
+if st.session_state["show_process_log"]:
+    st.markdown(f"<div class='log-box'>{st.session_state['process_log']}</div>", unsafe_allow_html=True)
+
+# --- Daily Summary Section ---
+col1, col2 = st.columns([10, 1])
+with col1:
+    st.header("Full Summary")
+with col2:
+    if st.button("📝", key="log_daily"):
+        st.session_state["show_daily_log"] = not st.session_state["show_daily_log"]
+
+if st.button("Generate Summary"):
+    with st.spinner("Generating summary…"):
+        out, err = run_cmd("python src/main.py report --all")
+    st.session_state["daily_log"] = out + ("\n" + err if err else "")
+    csv_block = extract_csv(out)
+    if csv_block:
+        df = pd.read_csv(io.StringIO(csv_block))
+        st.dataframe(df)
+        st.download_button("Download CSV", df.to_csv(index=False), file_name="full_summary.csv", mime="text/csv")
+        st.success("Full summary generated.")
+    else:
+        st.error("No data returned or parsing error.")
+
+if st.session_state["show_daily_log"]:
+    st.markdown(f"<div class='log-box'>{st.session_state['daily_log']}</div>", unsafe_allow_html=True)
+
+# ----- Reports Section -----
+col1, col2 = st.columns([10, 1])
+with col1:
+    st.header("Reports")
+with col2:
+    if st.button("📝", key="log_report"):
+        st.session_state["show_report_log"] = not st.session_state["show_report_log"]
+
+# Date range inputs
+start_date = st.date_input("Start Date")
+end_date = st.date_input("End Date")
+
+# Summary by Date Range
+if st.button("Generate by Date Range"):
+    with st.spinner("Generating report…"):
+        out, err = run_cmd(
+            f"python src/main.py report {start_date.isoformat()} {end_date.isoformat()}"
+        )
+    st.session_state["report_log"] = out + ("\n" + err if err else "")
+    csv_block = extract_csv(out)
+    if csv_block:
+        df = pd.read_csv(io.StringIO(csv_block))
+        st.dataframe(df)
         st.download_button(
-            label="Download CSV",
-            data=st.session_state['last_csv'],
-            file_name=f"daily_summary_{date.today().isoformat()}.csv",
+            "Download CSV", df.to_csv(index=False),
+            file_name=f"report_{start_date}_to_{end_date}.csv",
             mime="text/csv"
         )
-if st.button("📝 Show Log", key="log_daily") and st.session_state['last_log']:
-    st.info(st.session_state['last_log'])
+        st.success("Report generated.")
+    else:
+        st.error("No data returned or parsing error.")
 
-st.markdown("---")
-
-# Section: Generate Report by Date Range
-st.markdown("## Generate Report by Date Range")
-col1, col2, col3 = st.columns([2,2,1])
-with col1:
-    start_date = st.date_input("Start date", value=date.today().replace(day=1))
-with col2:
-    end_date = st.date_input("End date", value=date.today())
-with col3:
-    if st.button("Generate Report"):
-        raw, log = run_command([
-            sys.executable, "-m", "src.main", "report",
-            start_date.isoformat(), end_date.isoformat(),
-        ])
-        st.session_state['last_log'] = log
-        csv_data = parse_csv(raw)
-        if csv_data:
-            st.session_state['last_csv'] = csv_data
-            df = pd.read_csv(io.StringIO(csv_data))
-            st.dataframe(df)
-# Download and Log
-col1, col2 = st.columns([3,1])
-with col2:
-    if st.session_state['last_csv']:
+# Day Breakdown
+if st.button("Day Breakdown"):
+    with st.spinner("Generating day breakdown…"):
+        out, err = run_cmd(
+            f"python src/main.py report day-breakdown {start_date.isoformat()} {end_date.isoformat()}"
+        )
+    st.session_state["report_log"] = out + ("\n" + err if err else "")
+    csv_block = extract_csv(out)
+    if csv_block:
+        df = pd.read_csv(io.StringIO(csv_block))
+        st.dataframe(df)
         st.download_button(
-            label="Download CSV",
-            data=st.session_state['last_csv'],
-            file_name=f"amortization_report_{start_date.isoformat()}_{end_date.isoformat()}.csv",
+            "Download CSV", df.to_csv(index=False),
+            file_name=f"day_breakdown_{start_date}_to_{end_date}.csv",
             mime="text/csv"
         )
-if st.button("📝 Show Log", key="log_report") and st.session_state['last_log']:
-    st.info(st.session_state['last_log'])
+        st.success("Day breakdown generated.")
+    else:
+        st.error("No data returned or parsing error.")
+
+# Loan Breakdown
+if st.button("Loan Breakdown"):
+    with st.spinner("Generating loan breakdown…"):
+        out, err = run_cmd(
+            f"python src/main.py report loan-breakdown {start_date.isoformat()} {end_date.isoformat()}"
+        )
+    st.session_state["report_log"] = out + ("\n" + err if err else "")
+    csv_block = extract_csv(out)
+    if csv_block:
+        df = pd.read_csv(io.StringIO(csv_block))
+        st.dataframe(df)
+        st.download_button(
+            "Download CSV", df.to_csv(index=False),
+            file_name=f"loan_breakdown_{start_date}_to_{end_date}.csv",
+            mime="text/csv"
+        )
+        st.success("Loan breakdown generated.")
+    else:
+        st.error("No data returned or parsing error.")
+
+# Full Breakdown
+if st.button("Full Breakdown"):
+    with st.spinner("Generating full breakdown…"):
+        out, err = run_cmd(
+            f"python src/main.py report full-breakdown {start_date.isoformat()} {end_date.isoformat()}"
+        )
+    st.session_state["report_log"] = out + ("\n" + err if err else "")
+    csv_block = extract_csv(out)
+    if csv_block:
+        df = pd.read_csv(io.StringIO(csv_block))
+        st.dataframe(df)
+        st.download_button(
+            "Download CSV", df.to_csv(index=False),
+            file_name=f"full_breakdown_{start_date}_to_{end_date}.csv",
+            mime="text/csv"
+        )
+        st.success("Full breakdown generated.")
+    else:
+        st.error("No data returned or parsing error.")
+
+# Final Reports log display
+if st.session_state["show_report_log"]:
+    st.markdown(f"<div class='log-box'>{st.session_state['report_log']}</div>", unsafe_allow_html=True)
