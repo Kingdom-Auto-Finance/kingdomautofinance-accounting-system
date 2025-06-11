@@ -4,26 +4,15 @@ from datetime import date
 
 import config
 from supabase import create_client
-from google.cloud import secretmanager
 
 logger = logging.getLogger(__name__)
 
-# Supabase & Secret Manager helpers
-def get_supabase_key():
-    """Fetch Supabase service-role key from Secret Manager"""
-    sm = secretmanager.SecretManagerServiceClient()
-    resp = sm.access_secret_version(
-        request={"name": config.SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME}
-    )
-    return resp.payload.data.decode("utf-8")
-
-
+# Supabase helper (no secret manager)
 def create_supabase_client():
-    """Initialize Supabase client with URL and service-role key"""
+    """Initialize Supabase client with URL and service-role key (from environment)"""
     url = config.SUPABASE_URL
-    key = get_supabase_key()
+    key = config.SUPABASE_SERVICE_ROLE_KEY  # Now read directly from environment variable
     return create_client(url, key)
-
 
 def generate_and_update_daily_summary(full_rebuild=False):
     """
