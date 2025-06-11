@@ -11,16 +11,9 @@ logger = logging.getLogger(__name__)
 # Optional config constant for which table holds loan IDs
 LOANS_TABLE = getattr(config, "LOANS_TABLE", "loans")
 
-
+import os
 def get_supabase_key():
-    """
-    Retrieve the Supabase service-role key from Secret Manager.
-    """
-    sm = secretmanager.SecretManagerServiceClient()
-    name = config.SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME
-    response = sm.access_secret_version(request={"name": name})
-    return response.payload.data.decode("UTF-8")
-
+    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
 def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = False) -> pd.DataFrame:
     """

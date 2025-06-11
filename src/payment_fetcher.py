@@ -9,15 +9,9 @@ from gutils import safe_string_to_float
 from supabase import create_client
 from google.cloud import secretmanager
 
-
+import os
 def get_supabase_key():
-    """Fetch Supabase service-role key from Secret Manager"""
-    sm = secretmanager.SecretManagerServiceClient()
-    response = sm.access_secret_version(
-        request={"name": config.SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME}
-    )
-    return response.payload.data.decode("utf-8")
-
+    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
 def create_supabase_client():
     """Initialize Supabase client with URL and service-role key"""
