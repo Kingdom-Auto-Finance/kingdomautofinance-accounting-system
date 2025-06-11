@@ -60,3 +60,6 @@ DEFAULT_LATE_FEE = D("25.00")
 
 # Table in Supabase that tracks all loan IDs
 LOANS_TABLE = "loans"
+
+# How many future installments may be covered before any excess goes to principal
+MAX_FORWARD_INSTALLMENTS = 2

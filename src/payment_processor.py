@@ -10,7 +10,7 @@ from google.cloud import secretmanager
 # Tolerance for Payments
 TOLERANCE = Decimal('10.00')       # allow up to $10 shortfall
 THRESHOLD_RATIO = Decimal('0.90')  # require at least 90% of installment
-EXTRA_TOLERANCE = Decimal('20.00')  # only open next installment if at least $20 extra
+### EXTRA_TOLERANCE = Decimal('20.00')  # only open next installment if at least $20 extra // Changed to 50% of the next installment on 5/22/2025.
 
 # Suppress verbose Supabase/PostgREST HTTP logs for clarity
 logging.getLogger("supabase._client").setLevel(logging.WARNING)
@@ -170,20 +170,37 @@ def process_payments():
             else:
                 fee_to_apply = config.DEFAULT_LATE_FEE
 
-            # Determine cumulative amount already paid (previously + this payment)
-            cumulative_paid = prev_actual_paid + remaining_amt
+# Determine cumulative amount already paid (previously + this payment)
+cumulative_paid = prev_actual_paid + remaining_amt
 
-            # Apply tolerances and thresholds using cumulative payments
-            if cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO:
-                extra = cumulative_paid - scheduled_due
+# Apply tolerances and thresholds using cumulative payments
+if cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO:
+    extra = cumulative_paid - scheduled_due
 
-                # If extra ≥ EXTRA_TOLERANCE and more installments allowed, only pay up to scheduled due
-                if extra >= EXTRA_TOLERANCE and n < max_rows - 1:
-                    apply_amt = scheduled_due - prev_actual_paid  # Close exactly at scheduled_due
-                else:
-                    apply_amt = remaining_amt  # Small extra or last allowed row, apply everything remaining here
-            else:
-                apply_amt = remaining_amt  # Doesn't meet tolerance/threshold, apply partial
+    # Check gap to next installment to determine extra tolerance
+    if n < len(unpaid_rows) - 1:
+        next_row = unpaid_rows[n + 1][1]
+        next_due_date = datetime.strptime(next_row["duedate"], "%Y-%m-%d").date()
+        days_until_next = (next_due_date - due_dt).days
+
+        # If next installment is monthly (~27 to 32 days), no extra tolerance; extra goes to principal directly
+        if 27 <= days_until_next <= 32:
+            dynamic_extra_tolerance = Decimal('Infinity')  # Forces extra to stay as principal
+        else:
+            next_scheduled_interest = Decimal(str(next_row.get("scheduledinterest") or 0.0))
+            next_scheduled_principal = Decimal(str(next_row.get("principal") or 0.0))
+            next_scheduled_due = next_scheduled_interest + next_scheduled_principal
+            dynamic_extra_tolerance = next_scheduled_due * Decimal('0.50')
+    else:
+        dynamic_extra_tolerance = Decimal('0.00')  # No next installment, extra stays here
+
+    # If extra ≥ dynamic tolerance and more installments allowed, only pay up to scheduled due
+    if extra >= dynamic_extra_tolerance and n < max_rows - 1:
+        apply_amt = scheduled_due - prev_actual_paid  # Close exactly at scheduled_due
+    else:
+        apply_amt = remaining_amt  # Small extra or monthly gap, apply everything remaining here
+else:
+    apply_amt = remaining_amt  # Doesn't meet tolerance/threshold, apply partial
 
             # Use your amortization calculator for date-aware principal/interest split
             result = calculate_principal_and_status(

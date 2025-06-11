@@ -128,10 +128,11 @@ def calculate_principal_and_status(
     )
 
     # Return values needed to update the schedule
-    # Note: We DO NOT return 'InterestPaid' as it's pre-filled and should not be overwritten.
+    # Note: 'InterestPaid' is the portion of this payment applied to interest (not just the scheduled amount).
     return {
         "PrincipalPaid": principal_paid,    # Amount of payment allocated to principal
         "LateFee": late_fee_charged,       # The fee AMOUNT assessed ($25 or $0)
         "EndingBalance": ending_balance,   # Remaining balance after payment
         "Status": status,                   # Final status
+        "InterestPaid": interest_covered_by_payment 
     }
