@@ -1,19 +1,12 @@
 # bootstrap.py
 
 import config
-import gutils
 from supabase import create_client
-from google.cloud import secretmanager
 import pandas as pd
-
+import os
 
 def get_supabase_key():
-    """Fetch Supabase service-role key from Secret Manager"""
-    sm = secretmanager.SecretManagerServiceClient()
-    response = sm.access_secret_version(
-        request={"name": config.SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME}
-    )
-    return response.payload.data.decode("utf-8")
+    return os.environ.get("supabase_service_role_key")
 
 
 def create_supabase_client():
@@ -53,17 +46,36 @@ def sanitize_value(value, dtype):
     return value
 
 
+def get_all_loan_ids_from_local_folder():
+    """List all CSV filenames in 'schedules_csv/' and extract loan_ids"""
+    folder = "schedules_csv"
+    return [
+        os.path.splitext(f)[0]
+        for f in os.listdir(folder)
+        if f.endswith(".csv")
+    ]
+
+
+def get_local_schedule_df(loan_id):
+    """Read CSV for given loan_id from schedules_csv/"""
+    csv_path = os.path.join("schedules_csv", f"{loan_id}.csv")
+    if not os.path.isfile(csv_path):
+        print(f"⚠️ CSV file not found for loan {loan_id}")
+        return None
+    try:
+        return pd.read_csv(csv_path)
+    except Exception as e:
+        print(f"⚠️ Failed to read CSV for {loan_id}: {e}")
+        return None
+
+
 def bootstrap_tables():
     """
-    Create schedule tables and import existing amortization schedules from Google Sheets,
+    Create schedule tables and import amortization schedules from local CSV files,
     skipping tables that already have data, and record each loan in the master table.
     """
     supabase = create_supabase_client()
-    gs_client = gutils.get_gspread_client()
-
-    loan_ids = gutils.get_loan_ids_from_drive_folder(
-        config.AMORTIZATION_SCHEDULES_FOLDER_ID
-    )
+    loan_ids = get_all_loan_ids_from_local_folder()
 
     # Define column mapping and expected types
     cols = [
@@ -71,7 +83,7 @@ def bootstrap_tables():
         ('duedate', 'date'),
         ('scheduledbalance', 'float'),   
         ('adjustedbalance', 'float'), 
-        ('scheduledpayment',     'float'),
+        ('scheduledpayment', 'float'),
         ('actualpaymentdate', 'date'),
         ('actualpaymentamount', 'float'),
         ('scheduledprincipal', 'float'),   
@@ -102,23 +114,16 @@ def bootstrap_tables():
         existing_count = head_resp.count or 0
         if existing_count > 0:
             print(f"Table {table_name} already has {existing_count} rows; skipping import.")
-            # Still ensure loan is recorded
             record_new_loan(supabase, loan_id)
             continue
 
-        # 3) Locate the sheet for this loan
-        sheet_id = gutils.find_sheet_id_by_loan_id_in_folder(loan_id)
-        if not sheet_id:
-            print(f"⚠️ No spreadsheet named '{loan_id}' found; skipping import.")
-            continue
-
-        # 4) Read the 'Schedule' tab
-        df_sched = gutils.get_sheet_as_df(gs_client, sheet_id, "Schedule")
+        # 3) Load amortization schedule from CSV
+        df_sched = get_local_schedule_df(loan_id)
         if df_sched is None or df_sched.empty:
-            print(f"⚠️ Schedule sheet for '{loan_id}' is empty or unreadable; skipping.")
+            print(f"⚠️ Schedule CSV for '{loan_id}' is empty or unreadable; skipping.")
             continue
 
-        # 5) Prepare rows for insertion with sanitized data
+        # 4) Prepare rows for insertion with sanitized data
         rows_to_insert = []
         for _, row in df_sched.iterrows():
             record = {}
@@ -127,21 +132,20 @@ def bootstrap_tables():
                 record[col_name] = sanitize_value(raw, dtype)
             rows_to_insert.append(record)
 
-        # 6) Filter out rows missing primary key 'paymentnumber'
+        # 5) Filter out rows missing primary key 'paymentnumber'
         before_count = len(rows_to_insert)
         rows_to_insert = [r for r in rows_to_insert if r.get('paymentnumber') is not None]
         removed = before_count - len(rows_to_insert)
         if removed > 0:
             print(f"Skipped {removed} rows with missing 'paymentnumber' in {table_name}.")
 
-        # 7) Bulk insert into Supabase
+        # 6) Bulk insert into Supabase
         if rows_to_insert:
             ins = supabase.from_(table_name).insert(rows_to_insert).execute()
             if hasattr(ins, "error") and ins.error:
                 print(f"Error inserting data into {table_name}: {ins.error}")
             else:
                 print(f"Imported {len(rows_to_insert)} rows into {table_name}.")
-                # Record successful import in master loans table
                 record_new_loan(supabase, loan_id)
 
 
