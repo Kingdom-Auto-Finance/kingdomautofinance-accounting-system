@@ -6,21 +6,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # Path to 'src' directory
 PROJECT_ROOT = os.path.dirname(BASE_DIR)  # Path to 'KingdomAutoFinance' directory
 
 # --- Google Sheet Identifiers ---
-# Replace with your actual Payments Log Sheet ID
-# --- Google Sheet Identifiers ---
-SOURCE_PAYMENTS_SHEET_ID = "14aPTzhbjpRXXTjzLWbOtj5ZFiNhbWAGmgmXzkwkAvU8" # Added Source Sheet ID
-PAYMENTS_LOG_SHEET_ID = "1WS70qASt5WXUrv_DuRxFG7MYoqbyMXBT08t-WW6zFbk" 
-DAILY_SUMMARY_REPORT_SHEET_ID = "1ln9Bw9HkulHA_s1m8E2XnGbIs9K_-bkBikdjlo0tdLo" 
+# These are only needed if you continue using Google Sheets for data import/export.
+SOURCE_PAYMENTS_SHEET_ID = os.getenv("SOURCE_PAYMENTS_SHEET_ID", "14aPTzhbjpRXXTjzLWbOtj5ZFiNhbWAGmgmXzkwkAvU8")
+PAYMENTS_LOG_SHEET_ID = os.getenv("PAYMENTS_LOG_SHEET_ID", "1WS70qASt5WXUrv_DuRxFG7MYoqbyMXBT08t-WW6zFbk")
+DAILY_SUMMARY_REPORT_SHEET_ID = os.getenv("DAILY_SUMMARY_REPORT_SHEET_ID", "1ln9Bw9HkulHA_s1m8E2XnGbIs9K_-bkBikdjlo0tdLo")
 
 # --- Google Drive Folder for Amortization Schedules ---
-# ** ACTION: Replace with the actual ID of the Google Drive folder **
-# Find this ID in the folder's URL in Google Drive
-# e.g., https://drive.google.com/drive/folders/THIS_IS_THE_FOLDER_ID
-AMORTIZATION_SCHEDULES_FOLDER_ID = "1u5nAuQVIRosLsZgPPuPLmRriGRyQf60s"
+AMORTIZATION_SCHEDULES_FOLDER_ID = os.getenv("AMORTIZATION_SCHEDULES_FOLDER_ID", "1u5nAuQVIRosLsZgPPuPLmRriGRyQf60s")
 
-# --- Secret Manager ---
-# Replace with your actual Secret Resource Name from Google Cloud Secret Manager
-SERVICE_ACCOUNT_SECRET_RESOURCE_NAME = "projects/544331774603/secrets/kaf-service-account-key/versions/2"
+# --- Service Account Credentials (Google Sheets Only) ---
+# Still needed ONLY if Google Sheets import/export is active
+SERVICE_ACCOUNT_SECRET_RESOURCE_NAME = os.getenv("SERVICE_ACCOUNT_SECRET_RESOURCE_NAME", "")
 
 # --- Local Paths (mainly for logs) ---
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
@@ -37,10 +33,7 @@ if not os.path.exists(LOG_DIR):
                 f.write("*\n")
                 f.write("!.gitignore\n")
     except OSError as e:
-        # Handle potential race condition if another process creates it
         if not os.path.exists(LOG_DIR):
-            # Re-raise exception if it's not due to directory already existing
-            # Use print here as logging might not be configured yet when config is imported
             print(f"Error creating log directory {LOG_DIR}: {e}") 
             raise 
 
@@ -48,15 +41,13 @@ if not os.path.exists(LOG_DIR):
 DEFAULT_LATE_FEE_PERCENTAGE = 0.05
 DEFAULT_GRACE_PERIOD_DAYS = 3
 
-# Supabase configuration
-SUPABASE_URL = "https://puwcyhbjchkfvvaccacg.supabase.co"
-SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME = "projects/544331774603/secrets/supabase-service-role-key/versions/1"
-SUPABASE_KEY_SECRET_NAME = "projects/544331774603/secrets/supabase-service-role-key/versions/1"
-
 from decimal import Decimal as D
-
-# Flat late fee per late payment
 DEFAULT_LATE_FEE = D("25.00")
+
+# --- Supabase configuration (via environment variables only) ---
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://puwcyhbjchkfvvaccacg.supabase.co")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # Your secret (REQUIRED)
+# No need for *_SECRET_RESOURCE_NAME or *_KEY_SECRET_NAME anymore!
 
 # Table in Supabase that tracks all loan IDs
 LOANS_TABLE = "loans"
