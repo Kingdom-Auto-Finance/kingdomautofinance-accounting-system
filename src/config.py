@@ -46,7 +46,7 @@ DEFAULT_LATE_FEE = D("25.00")
 
 # --- Supabase configuration (via environment variables only) ---
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://puwcyhbjchkfvvaccacg.supabase.co")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # Your secret (REQUIRED)
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("supabase_service_role_key")  # Your secret (REQUIRED)
 # No need for *_SECRET_RESOURCE_NAME or *_KEY_SECRET_NAME anymore!
 
 # Table in Supabase that tracks all loan IDs
