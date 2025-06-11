@@ -67,7 +67,7 @@ def get_drive_service():
     if drive_service_client is None:
         logger.debug("Initializing Google Drive service client...")
         try:
-            credentials = get_service_account_credentials_from_secret_manager() 
+            credentials = get_service_account_credentials_from_env()
             drive_service_client = build('drive', 'v3', credentials=credentials, cache_discovery=False) 
             logger.info("Google Drive API service client created.")
         except Exception as e:
@@ -77,17 +77,23 @@ def get_drive_service():
     return drive_service_client
 
 # --- get_service_account_credentials_from_secret_manager --- 
-def get_service_account_credentials_from_secret_manager():
+def get_service_account_credentials_from_env():
     try:
-        sm_client = secretmanager.SecretManagerServiceClient()
-        response = sm_client.access_secret_version(request={"name": config.SERVICE_ACCOUNT_SECRET_RESOURCE_NAME})
-        secret_payload_str = response.payload.data.decode("UTF-8")
-        service_account_info = json.loads(secret_payload_str)
-        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.readonly']
+        json_data = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+        if not json_data:
+            raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON environment variable.")
+
+        service_account_info = json.loads(json_data)
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive.readonly"
+        ]
         credentials = Credentials.from_service_account_info(service_account_info, scopes=scopes)
-        logger.debug("Successfully retrieved credentials from Secret Manager.")
+        logger.debug("Successfully created credentials from GOOGLE_SERVICE_ACCOUNT_JSON.")
         return credentials
-    except Exception as e: logger.error(f"Failed to get credentials from Secret Manager: {e}", exc_info=True); raise
+    except Exception as e:
+        logger.error(f"Failed to load credentials from env: {e}", exc_info=True)
+        raise
 
 # --- get_gspread_client --- 
 def get_gspread_client():
@@ -95,7 +101,7 @@ def get_gspread_client():
     if gspread_authorized_client is None:
         logger.debug("Initializing gspread client...")
         try:
-            credentials = get_service_account_credentials_from_secret_manager()
+            credentials = get_service_account_credentials_from_env()
             gspread_authorized_client = gspread.authorize(credentials)
             logger.info("gspread client authorized successfully.")
         except Exception as e: 

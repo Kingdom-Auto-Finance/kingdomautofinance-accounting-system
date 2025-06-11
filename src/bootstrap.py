@@ -46,27 +46,24 @@ def sanitize_value(value, dtype):
     return value
 
 
-def get_all_loan_ids_from_local_folder():
-    """List all CSV filenames in 'schedules_csv/' and extract loan_ids"""
-    folder = "schedules_csv"
-    return [
-        os.path.splitext(f)[0]
-        for f in os.listdir(folder)
-        if f.endswith(".csv")
-    ]
+import gutils
+
+def get_all_loan_ids_from_drive():
+    return gutils.get_loan_ids_from_drive_folder(config.AMORTIZATION_SCHEDULES_FOLDER_ID)
 
 
-def get_local_schedule_df(loan_id):
-    """Read CSV for given loan_id from schedules_csv/"""
-    csv_path = os.path.join("schedules_csv", f"{loan_id}.csv")
-    if not os.path.isfile(csv_path):
-        print(f"⚠️ CSV file not found for loan {loan_id}")
+
+def get_google_sheet_df(loan_id):
+    gs_client = gutils.get_gspread_client()
+    sheet_id = gutils.find_sheet_id_by_loan_id_in_folder(loan_id)
+    if not sheet_id:
+        print(f"⚠️ Sheet '{loan_id}' not found in Drive.")
         return None
-    try:
-        return pd.read_csv(csv_path)
-    except Exception as e:
-        print(f"⚠️ Failed to read CSV for {loan_id}: {e}")
+    df = gutils.get_sheet_as_df(gs_client, sheet_id, "Schedule")
+    if df is None or df.empty:
+        print(f"⚠️ Sheet '{loan_id}' is unreadable or empty.")
         return None
+    return df
 
 
 def bootstrap_tables():
@@ -75,7 +72,7 @@ def bootstrap_tables():
     skipping tables that already have data, and record each loan in the master table.
     """
     supabase = create_supabase_client()
-    loan_ids = get_all_loan_ids_from_local_folder()
+    loan_ids = get_all_loan_ids_from_drive()
 
     # Define column mapping and expected types
     cols = [
@@ -118,7 +115,7 @@ def bootstrap_tables():
             continue
 
         # 3) Load amortization schedule from CSV
-        df_sched = get_local_schedule_df(loan_id)
+        df_sched = get_google_sheet_df(loan_id)
         if df_sched is None or df_sched.empty:
             print(f"⚠️ Schedule CSV for '{loan_id}' is empty or unreadable; skipping.")
             continue
