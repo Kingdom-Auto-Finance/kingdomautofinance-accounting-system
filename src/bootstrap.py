@@ -69,18 +69,18 @@ def bootstrap_tables():
     cols = [
         ('paymentnumber', 'int'),
         ('duedate', 'date'),
-        ('scheduledbalance', 'float'),   beginningbalance
-        ('adjustedbalance', 'float'), new
+        ('scheduledbalance', 'float'),   
+        ('adjustedbalance', 'float'), 
         ('scheduledpayment',     'float'),
         ('actualpaymentdate', 'date'),
         ('actualpaymentamount', 'float'),
-        ('scheduledprincipal', 'float'),    principal
+        ('scheduledprincipal', 'float'),   
         ('scheduledinterest', 'float'),        
         ('principalpaid', 'float'),
         ('interestpaid', 'float'),
         ('latefee', 'float'),
         ('creditapplied', 'float'),
-        ('scheduledfinalbalance', 'float'), balance
+        ('scheduledfinalbalance', 'float'), 
         ('endingbalance', 'float'),
         ('status', 'str'),
     ]

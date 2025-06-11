@@ -83,6 +83,9 @@ def process_payments():
             logger.error(f"Payment {pid}: invalid amount '{raw_amount}'")
             continue
 
+        # *** NEW: initialize remaining bucket for this payment ***
+        remaining_amt = payment_amt
+
         table = f"schedule_{loan_id}"
 
         # Step 2: Fetch amortization schedule rows for this loan
@@ -90,8 +93,8 @@ def process_payments():
             sched = (
                 sb.from_(table)
                   .select(
-                      "paymentnumber,duedate,beginningbalance,scheduledinterest,interestpaid,principal,"
-                      "actualpaymentdate,actualpaymentamount,principalpaid,latefee,status"
+                      "paymentnumber,duedate,scheduledbalance,adjustedbalance,scheduledpayment,actualpaymentdate,actualpaymentamount,scheduledprincipal,scheduledinterest,principalpaid,interestpaid,"
+                      "latefee,creditapplied,scheduledfinalbalance,endingbalance,status"
                   )
                   .order("paymentnumber")
                   .execute().data or []
@@ -118,7 +121,6 @@ def process_payments():
 
         # Step 3: Prepare for allocation
         allocation_done = False
-        remaining_amt = payment_amt
         
         # --- Dynamically set max_rows based on payment frequency inferred from due date intervals ---
         schedule_due_dates = [datetime.strptime(row["duedate"], "%Y-%m-%d").date() for row in sched[:3] if row.get("duedate")]
@@ -148,6 +150,16 @@ def process_payments():
             logger.info(f"Payment {pid}: all installments are paid for loan {loan_id}, treating as principal prepayment or extra.")
             continue
 
+        # Fetch all unprocessed payments for this loan (outside the loop over unpaid_rows)
+        all_unprocessed = (
+            sb.from_("payments_log")
+              .select("id,payment_date,payment_amount")
+              .eq("loan_id", loan_id)
+              .eq("processed", False)
+              .order("payment_date")
+              .execute()
+        ).data or []
+
         # Step 4: Allocate the payment, row by row (up to max cap)
         for n, (idx, row) in enumerate(unpaid_rows):
             if n >= max_rows or remaining_amt <= 0:
@@ -155,9 +167,9 @@ def process_payments():
 
             # Prepare all scheduled values for this row
             due_dt = datetime.strptime(row["duedate"], "%Y-%m-%d").date()
-            bb = Decimal(str(row.get("beginningbalance") or 0.0))
+            bb = Decimal(str(row.get("scheduledbalance") or 0.0))
             scheduled_interest = Decimal(str(row.get("scheduledinterest") or 0.0))
-            scheduled_principal = Decimal(str(row.get("principal") or 0.0))
+            scheduled_principal = Decimal(str(row.get("scheduledprincipal") or 0.0))
             scheduled_due = scheduled_interest + scheduled_principal
             prev_principal_paid = Decimal(str(row.get("principalpaid") or 0.0))
             prev_latefee = Decimal(str(row.get("latefee") or 0.0))
@@ -170,71 +182,71 @@ def process_payments():
             else:
                 fee_to_apply = config.DEFAULT_LATE_FEE
 
-# Determine cumulative amount already paid (previously + this payment)
-cumulative_paid = prev_actual_paid + remaining_amt
+            # Determine cumulative amount already paid (previously + this payment)
+            cumulative_paid = prev_actual_paid + remaining_amt
 
-# Apply tolerances and thresholds using cumulative payments
-if cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO:
-    extra = cumulative_paid - scheduled_due
+            # Apply tolerances and thresholds using cumulative payments
+            if cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO:
+                extra = cumulative_paid - scheduled_due
 
-    # Check gap to next installment to determine extra tolerance
-    if n < len(unpaid_rows) - 1:
-        next_row = unpaid_rows[n + 1][1]
-        next_due_date = datetime.strptime(next_row["duedate"], "%Y-%m-%d").date()
-        days_until_next = (next_due_date - due_dt).days
+                # Check gap to next installment …
+                if n < len(unpaid_rows) - 1:
+                    next_row = unpaid_rows[n + 1][1]
+                    next_due_date = datetime.strptime(next_row["duedate"], "%Y-%m-%d").date()
+                    days_until_next = (next_due_date - due_dt).days
 
-        # If next installment is monthly (~27 to 32 days), no extra tolerance; extra goes to principal directly
-        if 27 <= days_until_next <= 32:
-            dynamic_extra_tolerance = Decimal('Infinity')  # Forces extra to stay as principal
-        else:
-            next_scheduled_interest = Decimal(str(next_row.get("scheduledinterest") or 0.0))
-            next_scheduled_principal = Decimal(str(next_row.get("principal") or 0.0))
-            next_scheduled_due = next_scheduled_interest + next_scheduled_principal
-            dynamic_extra_tolerance = next_scheduled_due * Decimal('0.50')
-    else:
-        dynamic_extra_tolerance = Decimal('0.00')  # No next installment, extra stays here
+                    if 27 <= days_until_next <= 32:
+                        dynamic_extra_tolerance = Decimal('Infinity')
+                    else:
+                        next_scheduled_interest = Decimal(str(next_row.get("scheduledinterest") or 0.0))
+                        next_scheduled_principal = Decimal(str(next_row.get("scheduledprincipal") or 0.0))
+                        next_scheduled_due = next_scheduled_interest + next_scheduled_principal
+                        dynamic_extra_tolerance = next_scheduled_due * Decimal('0.50')
+                else:
+                    dynamic_extra_tolerance = Decimal('0.00')
 
-    # If extra ≥ dynamic tolerance and more installments allowed, only pay up to scheduled due
-    if extra >= dynamic_extra_tolerance and n < max_rows - 1:
-        apply_amt = scheduled_due - prev_actual_paid  # Close exactly at scheduled_due
-    else:
-        apply_amt = remaining_amt  # Small extra or monthly gap, apply everything remaining here
-else:
-    apply_amt = remaining_amt  # Doesn't meet tolerance/threshold, apply partial
+                # If this is the last row to be allocated due to 50% rule, apply all remaining_amt.
+                if (n == len(unpaid_rows) - 1) or (
+                    n < len(unpaid_rows) - 1
+                    and (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO)
+                    and extra < dynamic_extra_tolerance
+                ):
+                    # This is the last allocation for this payment (either last row, or stopping by the 50% rule)
+                    apply_amt = remaining_amt
+                else:
+                    needed_to_close = scheduled_due - prev_actual_paid
+                    apply_amt = min(remaining_amt, needed_to_close)
 
-            # Use your amortization calculator for date-aware principal/interest split
-            result = calculate_principal_and_status(
-                beginning_balance_float=float(bb),
-                interest_paid_prefilled_float=float(scheduled_interest),
-                actual_payment_amount_float=float(apply_amt),
-                due_date_str=row["duedate"],
-                actual_payment_date_str=pay_date_str,
-                grace_period_days=config.DEFAULT_GRACE_PERIOD_DAYS,
-                late_fee_amount_flat=fee_to_apply
-            )
-            if not result:
-                logger.error(
-                    f"Payment {pid}: calculation failed on installment {row['paymentnumber']}"
+                cumulative_total_paid = prev_actual_paid + apply_amt
+
+                result = calculate_principal_and_status(
+                    beginning_balance_float=float(bb),
+                    interest_paid_prefilled_float=float(scheduled_interest),
+                    actual_payment_amount_float=float(cumulative_total_paid),
+                    due_date_str=row["duedate"],
+                    actual_payment_date_str=pay_date_str,
+                    grace_period_days=config.DEFAULT_GRACE_PERIOD_DAYS,
+                    late_fee_amount_flat=fee_to_apply
                 )
-                continue
+                if not result:
+                    logger.error(
+                        f"Payment {pid}: calculation failed on installment {row['paymentnumber']}"
+                    )
+                    continue
 
-            # Gather result
-            interest_paid = Decimal(str(result.get("InterestPaid", 0)))
-            latefee_paid = Decimal(str(result.get("LateFee", 0)))
+                total_interest_paid = Decimal(str(result.get("InterestPaid", 0)))
+                total_latefee_paid = Decimal(str(result.get("LateFee", 0)))
+                new_actual_paid = cumulative_total_paid
+                new_interest_paid = total_interest_paid
+                new_latefee = total_latefee_paid
+                new_principal_paid = new_actual_paid - new_interest_paid - new_latefee
 
-            # Compute principal as the remainder (not from result["PrincipalPaid"])
-            principal_paid = apply_amt - interest_paid - latefee_paid
 
-            new_actual_paid = prev_actual_paid + apply_amt
-            new_interest_paid = Decimal(str(row.get("interestpaid") or 0.0)) + interest_paid
-            new_latefee = prev_latefee + latefee_paid
-            new_principal_paid = prev_principal_paid + principal_paid
-
-            # Always recalc ending balance as beginningbalance - total principal paid (cumulative)
+            # Always recalc ending balance as scheduledbalance - total principal paid (cumulative)
             ending_bal = bb - new_principal_paid
 
-            # Status = PAID if fully covered, otherwise PARTIAL (cumulative for partial payments)
-            new_status = "PAID" if new_actual_paid >= scheduled_due else "PARTIAL"
+            # Status = PAID if paid within tolerance/threshold, otherwise PARTIAL
+            new_status = "PAID" if (new_actual_paid + TOLERANCE >= scheduled_due or new_actual_paid >= scheduled_due * THRESHOLD_RATIO) else "PARTIAL"
 
             # Build and execute SQL to update this row
             sql = f'''
@@ -257,9 +269,35 @@ WHERE
                 )
                 continue
 
-            allocation_done = True
+            # Also update the next installment with this ending balance as adjustedbalance
+            next_paymentnumber = row["paymentnumber"] + 1
+            adj_sql = f'''
+            UPDATE public."{table}"
+            SET
+                adjustedbalance = {float(ending_bal)}
+            WHERE
+               "paymentnumber" = {next_paymentnumber};
+            '''
+            sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
+
+            # *** Modified: drain the bucket, break only when empty or by 50%-rule ***
             payment_rows.append(row['paymentnumber'])
             remaining_amt -= apply_amt  # Deduct what was just applied
+
+            # stop if we truly ran out of money
+            if remaining_amt <= 0:
+                allocation_done = True
+                break
+
+            # =========================
+            # ENFORCE 50% RULE HERE
+            # =========================
+            # If extra is less than the required threshold for the next row, stop further allocation
+            if (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO):
+                if n < len(unpaid_rows) - 1 and extra < dynamic_extra_tolerance:
+                    allocation_done = True
+                    break
+            # =========================
 
         # Step 5: Mark payment processed only if at least one row was updated
         if allocation_done:
