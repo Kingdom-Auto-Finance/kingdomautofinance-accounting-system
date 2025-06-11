@@ -5,7 +5,6 @@ from decimal import Decimal
 import config
 from amortization_calculator import calculate_principal_and_status
 from supabase import create_client
-from google.cloud import secretmanager
 
 # Tolerance for Payments
 TOLERANCE = Decimal('10.00')       # allow up to $10 shortfall
@@ -17,12 +16,12 @@ logging.getLogger("supabase._client").setLevel(logging.WARNING)
 logging.getLogger("postgrest.request_builder").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+import os
+
 def _get_supabase_client():
-    """Create Supabase client with service-role key from Secret Manager."""
-    sm = secretmanager.SecretManagerServiceClient()
-    secret = sm.access_secret_version(
-        request={"name": config.SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME}
-    ).payload.data.decode("utf-8")
+    secret = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not secret:
+        raise RuntimeError("Missing SUPABASE_SERVICE_ROLE_KEY environment variable.")
     return create_client(config.SUPABASE_URL, secret)
 
 _supabase = None
