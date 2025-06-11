@@ -61,7 +61,7 @@ st.markdown(
 # === Branding Header ===
 logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Auto-Finance-Logo-Blue_1@4x.png"
 st.image(logo_url, width=250)
-st.markdown("<h1 style='text-align:center'>Kingdom Accounting System</h1></br>Version: 1.01 - Last System Update: 05/22/2025", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center'>Kingdom Accounting System</h1></br>Version: 1.02 - Last System Update: 06/11/2025", unsafe_allow_html=True)
 
 # === Initialize session state for logs ===
 for sec in ["import", "fetch", "process", "daily", "report"]:
