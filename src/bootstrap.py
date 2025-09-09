@@ -4,6 +4,52 @@ import config
 from supabase import create_client
 import pandas as pd
 import os
+import time
+from postgrest.exceptions import APIError  # new
+
+def _reload_pgrst_schema(supabase):
+    """Ask PostgREST to refresh its schema cache (safe no-op if it’s not needed)."""
+    try:
+        supabase.rpc("run_sql", {"sql_text": "NOTIFY pgrst, 'reload schema';"}).execute()
+    except Exception:
+        # We never want schema reload to break the flow
+        pass
+
+def _safe_row_count(supabase, table_name, retries=5, base_delay=0.4):
+    """
+    Robust count that avoids HEAD (uses GET with limit=1 + count) and retries
+    while the schema cache catches up.
+    """
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            resp = (supabase
+                    .from_(table_name)
+                    .select("paymentnumber", count="exact")  # <-- no head=True
+                    .limit(1)
+                    .execute())
+            # supabase-py exposes both .count and .data
+            if hasattr(resp, "count") and resp.count is not None:
+                return int(resp.count)
+            return len(resp.data or [])
+        except APIError as e:
+            msg = str(e)
+            # Typical transient signals while schema cache updates
+            if ("schema cache" in msg or "PGRST205" in msg or "Could not find the table" in msg
+                or "JSON could not be generated" in msg):
+                time.sleep(base_delay * attempt)  # backoff
+                last_err = e
+                continue
+            raise
+        except Exception as e:
+            last_err = e
+            time.sleep(base_delay * attempt)
+            continue
+    # Last resort: assume 0 and keep going, but note we tried
+    print(f"[warn] Could not count rows for {table_name} after {retries} attempts. "
+          f"Proceeding as 0. Last error: {last_err}")
+    return 0
+
 
 def get_supabase_key():
     return os.environ.get("supabase_service_role_key")
@@ -98,6 +144,9 @@ def bootstrap_tables():
         table_name = f"schedule_{loan_id}"
 
         # 1) Ensure table exists
+
+        _reload_pgrst_schema(supabase)
+
         sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" (LIKE amortization_template INCLUDING ALL);'
         try:
             supabase.rpc("run_sql", {"sql_text": sql}).execute()
@@ -107,7 +156,12 @@ def bootstrap_tables():
             continue
 
         # 2) Skip import if table already has data
-        head_resp = supabase.from_(table_name).select("*", count="exact", head=True).execute()
+#        head_resp = supabase.from_(table_name).select("*", count="exact", head=True).execute()
+        row_count = _safe_row_count(supabase, table_name)
+        if row_count > 0:
+            print(f"Table {table_name} already has {row_count} rows. Skipping import.")
+            continue
+
         existing_count = head_resp.count or 0
         if existing_count > 0:
             print(f"Table {table_name} already has {existing_count} rows; skipping import.")
