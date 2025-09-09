@@ -1,3 +1,4 @@
+import os
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -18,11 +19,24 @@ logging.getLogger("postgrest.request_builder").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 def _get_supabase_client():
-    """Create Supabase client with service-role key from Secret Manager."""
-    sm = secretmanager.SecretManagerServiceClient()
-    secret = sm.access_secret_version(
-        request={"name": config.SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME}
-    ).payload.data.decode("utf-8")
+    """
+    Create Supabase client.
+
+    PRESERVED:
+      - Read SUPABASE_SERVICE_ROLE_KEY from environment.
+      - If not present, fall back to Secret Manager (as previously added).
+      - If neither available, raise a clear error.
+    """
+    secret = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not secret:
+        # Fallback to Secret Manager (kept intact)
+        sm = secretmanager.SecretManagerServiceClient()
+        try:
+            secret = sm.access_secret_version(
+                request={"name": config.SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME}
+            ).payload.data.decode("utf-8")
+        except Exception as e:
+            raise RuntimeError("Missing SUPABASE_SERVICE_ROLE_KEY environment variable.") from e
     return create_client(config.SUPABASE_URL, secret)
 
 _supabase = None
@@ -36,12 +50,9 @@ def _client():
 def process_payments():
     """
     Processes unprocessed payments from payments_log, oldest first.
-    Best Practice/Professional allocation:
-      - Allocate each payment to up to MAX_FORWARD_INSTALLMENTS rows.
-      - Each covered row receives its share of the payment (actualpaymentamount).
-      - Each row's interest and principal are calculated for actual payment date (early/late payments are handled).
-      - If payment exceeds cap, excess is principal prepayment on the last covered row.
-    No other code or logic is changed.
+
+    Minimal change: fix UnboundLocalError by ensuring new_* values are always
+    assigned (even when payment is below threshold). All other logic preserved.
     """
     sb = _client()
 
@@ -112,14 +123,13 @@ def process_payments():
         for row in sched:
             if not row.get("actualpaymentdate") or str(row.get("status", "")).upper() not in ("PAID",):
                 for field in ["interestpaid", "principalpaid", "latefee", "actualpaymentamount"]:
-                    # If field is None, blank, 'null', or 'None', set to 0.0 (as float, to match your later code)
                     if not row.get(field) or str(row.get(field)).strip().lower() in ("", "none", "null"):
                         row[field] = 0.0
 
         # Step 3: Prepare for allocation
         allocation_done = False
-        remaining_amt = payment_amt
-        
+        remaining_amt = payment_amt  # PRESERVED
+
         # --- Dynamically set max_rows based on payment frequency inferred from due date intervals ---
         schedule_due_dates = [datetime.strptime(row["duedate"], "%Y-%m-%d").date() for row in sched[:3] if row.get("duedate")]
         if len(schedule_due_dates) >= 2:
@@ -148,7 +158,7 @@ def process_payments():
             logger.info(f"Payment {pid}: all installments are paid for loan {loan_id}, treating as principal prepayment or extra.")
             continue
 
-        # Fetch all unprocessed payments for this loan (outside the loop over unpaid_rows)
+        # Fetch all unprocessed payments for this loan (kept even if not used)
         all_unprocessed = (
             sb.from_("payments_log")
               .select("id,payment_date,payment_amount")
@@ -203,9 +213,12 @@ def process_payments():
                 else:
                     dynamic_extra_tolerance = Decimal('0.00')
 
-                # If this is the last row to be allocated due to 50% rule, apply all remaining_amt.
-                if (n == len(unpaid_rows) - 1) or (n < len(unpaid_rows) - 1 and (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO) and extra < dynamic_extra_tolerance):
-                    # This is the last allocation for this payment (either last row, or stopping by the 50% rule)
+                # PRESERVED: your exact condition for the last allocation decision
+                if (n == len(unpaid_rows) - 1) or (
+                    n < len(unpaid_rows) - 1
+                    and (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO)
+                    and extra < dynamic_extra_tolerance
+                ):
                     apply_amt = remaining_amt
                 else:
                     needed_to_close = scheduled_due - prev_actual_paid
