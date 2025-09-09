@@ -145,24 +145,25 @@ def bootstrap_tables():
 
         # 1) Ensure table exists
 
-        _reload_pgrst_schema(supabase)
-
         sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" (LIKE amortization_template INCLUDING ALL);'
         try:
             supabase.rpc("run_sql", {"sql_text": sql}).execute()
             print(f"Ensured table {table_name} exists.")
+            _reload_pgrst_schema(supabase)
+            row_count = _safe_row_count(supabase, table_name)
         except Exception as e:
             print(f"Error creating {table_name}: {e}")
             continue
 
         # 2) Skip import if table already has data
-#        head_resp = supabase.from_(table_name).select("*", count="exact", head=True).execute()
+#       head_resp = supabase.from_(table_name).select("*", count="exact", head=True).execute()
         row_count = _safe_row_count(supabase, table_name)
         if row_count > 0:
             print(f"Table {table_name} already has {row_count} rows. Skipping import.")
             continue
 
-        existing_count = head_resp.count or 0
+#       existing_count = head_resp.count or 0
+        existing_count = row_count
         if existing_count > 0:
             print(f"Table {table_name} already has {existing_count} rows; skipping import.")
             record_new_loan(supabase, loan_id)
