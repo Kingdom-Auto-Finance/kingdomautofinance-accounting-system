@@ -1,4 +1,4 @@
-# payment_processor.py  (minimal-change revision)
+# payment_processor.py  (minimal fix: atomic claim, no advisory locks)
 
 import os
 import logging
@@ -53,32 +53,8 @@ def _client():
         _supabase = _get_supabase_client()
     return _supabase
 
-# --------------------------------------------------------------------
-# NEW: Per-payment advisory lock helpers (added; no schema changes)
-# --------------------------------------------------------------------
-def _try_lock_payment(sb, payment_id: str) -> bool:
-    """
-    Attempt to acquire a Postgres advisory lock for this payment_id.
-    Returns True if lock acquired, False otherwise.
-    """
-    sql = f"SELECT pg_try_advisory_lock(hashtext({repr(payment_id)})) AS locked;"
-    res = sb.rpc("run_sql", {"sql_text": sql}).execute()
-    data = getattr(res, "data", None) or []
-    if not data:
-        return False
-    val = list(data[0].values())[0]
-    return str(val).lower() in ("true", "t", "1")
-
-def _unlock_payment(sb, payment_id: str) -> None:
-    """Release the advisory lock for this payment_id (best-effort)."""
-    try:
-        sql = f"SELECT pg_advisory_unlock(hashtext({repr(payment_id)}));"
-        sb.rpc("run_sql", {"sql_text": sql}).execute()
-    except Exception:
-        pass
-
 # -----------------------------
-# Preserved: main processor
+# Main processor (business logic preserved)
 # -----------------------------
 def process_payments():
     """
@@ -90,9 +66,10 @@ def process_payments():
       - Interest/principal are calculated for actual payment date.
       - If payment exceeds cap, excess is principal prepayment on the last covered row.
 
-    NEW guardrails (ADDED ONLY):
-      - Per-payment advisory lock to prevent duplicate application in concurrent runs.
-      - Reconciliation check: ensure total applied equals payment amount (±$0.01) before marking processed.
+    NEW guardrails (minimal additions only):
+      - Atomic row claim (UPDATE ... WHERE processed=False) so two runs can’t take the same payment.
+      - Reconciliation: ensure total applied equals payment amount (±$0.01) before we leave it processed.
+      - If anything goes wrong after the claim, we revert processed=False in a finally block.
     """
     sb = _client()
 
@@ -117,11 +94,25 @@ def process_payments():
         pay_date_str = payment["payment_date"]  # Format: YYYY-MM-DD
 
         # ----------------------------
-        # ADDED: per-payment advisory lock
+        # NEW: Atomic claim of this payment row
         # ----------------------------
-        if not _try_lock_payment(sb, pid):
-            logger.info(f"Payment {pid}: already being processed elsewhere, skipping.")
+        claimed = False
+        finalized = False
+        claim = (
+            sb.from_("payments_log")
+              .update({
+                  "processed": True,  # claim it
+                  "processed_at": datetime.utcnow().isoformat(),
+              })
+              .eq("id", pid)
+              .eq("processed", False)  # only if still unprocessed
+              .execute()
+        )
+        claimed_rows = getattr(claim, "data", None) or []
+        if len(claimed_rows) == 0:
+            logger.info(f"Payment {pid}: already claimed/processed elsewhere; skipping.")
             continue
+        claimed = True
 
         try:
             # Validate date and amount (PRESERVED)
@@ -178,7 +169,7 @@ def process_payments():
             # Step 3: Prepare for allocation (PRESERVED)
             allocation_done = False
             remaining_amt = payment_amt          # PRESERVED
-            applied_total = Decimal('0.00')      # ADDED: for reconciliation
+            applied_total = Decimal('0.00')      # NEW: for reconciliation
 
             # Infer cadence → cap rows (PRESERVED)
             schedule_due_dates = [datetime.strptime(row["duedate"], "%Y-%m-%d").date() for row in sched[:3] if row.get("duedate")]
@@ -356,7 +347,7 @@ WHERE
                 allocation_done = True
                 payment_rows.append(row['paymentnumber'])
 
-                # ADDED: track amount actually applied before deducting
+                # NEW: track amount actually applied before deducting
                 applied_total += apply_amt
                 remaining_amt -= apply_amt
 
@@ -374,31 +365,35 @@ WHERE
                         break
 
             # ----------------------------
-            # ADDED: Reconciliation check
+            # NEW: Reconciliation check
             # ----------------------------
             if allocation_done:
                 if abs(applied_total - payment_amt) > Decimal('0.01'):
                     logger.error(
                         f"Payment {pid}: applied_total ({float(applied_total)}) != payment_amt ({float(payment_amt)}). "
-                        f"Not marking as processed; please review."
+                        f"Leaving as unprocessed for review."
                     )
-                    continue
+                    continue  # finally will revert the claim
 
-                # Mark processed (PRESERVED semantics)
+                # Finalize: already processed=True from claim; just (re)stamp processed_at
                 sb.from_("payments_log").update({
-                    "processed": True,
                     "processed_at": datetime.utcnow().isoformat()
-                }).eq("id", pid).eq("processed", False).execute()
+                }).eq("id", pid).execute()
 
                 logger.info(
                     f"Payment {pid}: payment of {float(payment_amt)} allocated across rows {payment_rows}"
                 )
+                finalized = True
             else:
                 logger.info(f"Payment {pid}: no allocation done, leaving unprocessed")
 
         finally:
-            # Always release the advisory lock (ADDED)
-            _unlock_payment(sb, pid)
+            # If claimed but not finalized, revert the claim so it can be safely retried
+            if claimed and not finalized:
+                sb.from_("payments_log").update({
+                    "processed": False,
+                    "processed_at": None
+                }).eq("id", pid).execute()
 
     # Report missing schedules (PRESERVED)
     for lid in sorted(set(missing)):
