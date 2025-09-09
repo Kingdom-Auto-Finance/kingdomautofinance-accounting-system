@@ -5,6 +5,7 @@ from decimal import Decimal
 import config
 from amortization_calculator import calculate_principal_and_status
 from supabase import create_client
+from google.cloud import secretmanager
 
 # Tolerance for Payments
 TOLERANCE = Decimal('10.00')       # allow up to $10 shortfall
@@ -16,12 +17,12 @@ logging.getLogger("supabase._client").setLevel(logging.WARNING)
 logging.getLogger("postgrest.request_builder").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-import os
-
 def _get_supabase_client():
-    secret = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    if not secret:
-        raise RuntimeError("Missing SUPABASE_SERVICE_ROLE_KEY environment variable.")
+    """Create Supabase client with service-role key from Secret Manager."""
+    sm = secretmanager.SecretManagerServiceClient()
+    secret = sm.access_secret_version(
+        request={"name": config.SUPABASE_SERVICE_ROLE_SECRET_RESOURCE_NAME}
+    ).payload.data.decode("utf-8")
     return create_client(config.SUPABASE_URL, secret)
 
 _supabase = None
@@ -82,9 +83,6 @@ def process_payments():
             logger.error(f"Payment {pid}: invalid amount '{raw_amount}'")
             continue
 
-        # *** NEW: initialize remaining bucket for this payment ***
-        remaining_amt = payment_amt
-
         table = f"schedule_{loan_id}"
 
         # Step 2: Fetch amortization schedule rows for this loan
@@ -120,6 +118,7 @@ def process_payments():
 
         # Step 3: Prepare for allocation
         allocation_done = False
+        remaining_amt = payment_amt
         
         # --- Dynamically set max_rows based on payment frequency inferred from due date intervals ---
         schedule_due_dates = [datetime.strptime(row["duedate"], "%Y-%m-%d").date() for row in sched[:3] if row.get("duedate")]
@@ -205,11 +204,7 @@ def process_payments():
                     dynamic_extra_tolerance = Decimal('0.00')
 
                 # If this is the last row to be allocated due to 50% rule, apply all remaining_amt.
-                if (n == len(unpaid_rows) - 1) or (
-                    n < len(unpaid_rows) - 1
-                    and (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO)
-                    and extra < dynamic_extra_tolerance
-                ):
+                if (n == len(unpaid_rows) - 1) or (n < len(unpaid_rows) - 1 and (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO) and extra < dynamic_extra_tolerance):
                     # This is the last allocation for this payment (either last row, or stopping by the 50% rule)
                     apply_amt = remaining_amt
                 else:
@@ -240,6 +235,37 @@ def process_payments():
                 new_latefee = total_latefee_paid
                 new_principal_paid = new_actual_paid - new_interest_paid - new_latefee
 
+            else:
+                # -------------------------------
+                # NEW: Partial-but-below-threshold
+                # -------------------------------
+                # Apply everything available to THIS row only (no forward allocation).
+                apply_amt = remaining_amt
+                cumulative_total_paid = prev_actual_paid + apply_amt
+
+                result = calculate_principal_and_status(
+                    beginning_balance_float=float(bb),
+                    interest_paid_prefilled_float=float(scheduled_interest),
+                    actual_payment_amount_float=float(cumulative_total_paid),
+                    due_date_str=row["duedate"],
+                    actual_payment_date_str=pay_date_str,
+                    grace_period_days=config.DEFAULT_GRACE_PERIOD_DAYS,
+                    late_fee_amount_flat=fee_to_apply
+                )
+                if not result:
+                    logger.error(
+                        f"Payment {pid}: calculation failed on installment {row['paymentnumber']}"
+                    )
+                    continue
+
+                total_interest_paid = Decimal(str(result.get("InterestPaid", 0)))
+                total_latefee_paid = Decimal(str(result.get("LateFee", 0)))
+                new_actual_paid = cumulative_total_paid
+                new_interest_paid = total_interest_paid
+                new_latefee = total_latefee_paid
+                new_principal_paid = new_actual_paid - new_interest_paid - new_latefee
+                # Note: We don't use extra/dynamic_extra_tolerance in this branch;
+                # remaining_amt will drop to zero and the loop will stop naturally.
 
             # Always recalc ending balance as scheduledbalance - total principal paid (cumulative)
             ending_bal = bb - new_principal_paid
@@ -279,14 +305,9 @@ WHERE
             '''
             sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
 
-            # *** Modified: drain the bucket, break only when empty or by 50%-rule ***
+            allocation_done = True
             payment_rows.append(row['paymentnumber'])
             remaining_amt -= apply_amt  # Deduct what was just applied
-
-            # stop if we truly ran out of money
-            if remaining_amt <= 0:
-                allocation_done = True
-                break
 
             # =========================
             # ENFORCE 50% RULE HERE
@@ -294,7 +315,6 @@ WHERE
             # If extra is less than the required threshold for the next row, stop further allocation
             if (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO):
                 if n < len(unpaid_rows) - 1 and extra < dynamic_extra_tolerance:
-                    allocation_done = True
                     break
             # =========================
 
