@@ -6,6 +6,8 @@ import pandas as pd
 import os
 import time
 from postgrest.exceptions import APIError  # new
+import gutils
+
 
 def _reload_pgrst_schema(supabase):
     """Ask PostgREST to refresh its schema cache (safe no-op if it’s not needed)."""
@@ -15,6 +17,7 @@ def _reload_pgrst_schema(supabase):
         # We never want schema reload to break the flow
         pass
 
+
 def _safe_row_count(supabase, table_name, retries=5, base_delay=0.4):
     """
     Robust count that avoids HEAD (uses GET with limit=1 + count) and retries
@@ -23,11 +26,13 @@ def _safe_row_count(supabase, table_name, retries=5, base_delay=0.4):
     last_err = None
     for attempt in range(1, retries + 1):
         try:
-            resp = (supabase
-                    .from_(table_name)
-                    .select("paymentnumber", count="exact")  # <-- no head=True
-                    .limit(1)
-                    .execute())
+            resp = (
+                supabase
+                .from_(table_name)
+                .select("paymentnumber", count="exact")  # <-- no head=True
+                .limit(1)
+                .execute()
+            )
             # supabase-py exposes both .count and .data
             if hasattr(resp, "count") and resp.count is not None:
                 return int(resp.count)
@@ -35,8 +40,12 @@ def _safe_row_count(supabase, table_name, retries=5, base_delay=0.4):
         except APIError as e:
             msg = str(e)
             # Typical transient signals while schema cache updates
-            if ("schema cache" in msg or "PGRST205" in msg or "Could not find the table" in msg
-                or "JSON could not be generated" in msg):
+            if (
+                "schema cache" in msg
+                or "PGRST205" in msg
+                or "Could not find the table" in msg
+                or "JSON could not be generated" in msg
+            ):
                 time.sleep(base_delay * attempt)  # backoff
                 last_err = e
                 continue
@@ -46,13 +55,16 @@ def _safe_row_count(supabase, table_name, retries=5, base_delay=0.4):
             time.sleep(base_delay * attempt)
             continue
     # Last resort: assume 0 and keep going, but note we tried
-    print(f"[warn] Could not count rows for {table_name} after {retries} attempts. "
-          f"Proceeding as 0. Last error: {last_err}")
+    print(
+        f"[warn] Could not count rows for {table_name} after {retries} attempts. "
+        f"Proceeding as 0. Last error: {last_err}"
+    )
     return 0
 
 
 def get_supabase_key():
-    return os.environ.get("supabase_service_role_key")
+    # Try uppercase first, fallback to lowercase (both supported in your envs)
+    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("supabase_service_role_key")
 
 
 def create_supabase_client():
@@ -92,11 +104,8 @@ def sanitize_value(value, dtype):
     return value
 
 
-import gutils
-
 def get_all_loan_ids_from_drive():
     return gutils.get_loan_ids_from_drive_folder(config.AMORTIZATION_SCHEDULES_FOLDER_ID)
-
 
 
 def get_google_sheet_df(loan_id):
@@ -114,7 +123,7 @@ def get_google_sheet_df(loan_id):
 
 def bootstrap_tables():
     """
-    Create schedule tables and import amortization schedules from local CSV files,
+    Create schedule tables and import amortization schedules from Google Sheets,
     skipping tables that already have data, and record each loan in the master table.
     """
     supabase = create_supabase_client()
@@ -124,18 +133,18 @@ def bootstrap_tables():
     cols = [
         ('paymentnumber', 'int'),
         ('duedate', 'date'),
-        ('scheduledbalance', 'float'),   
-        ('adjustedbalance', 'float'), 
+        ('scheduledbalance', 'float'),
+        ('adjustedbalance', 'float'),
         ('scheduledpayment', 'float'),
         ('actualpaymentdate', 'date'),
         ('actualpaymentamount', 'float'),
-        ('scheduledprincipal', 'float'),   
-        ('scheduledinterest', 'float'),        
+        ('scheduledprincipal', 'float'),
+        ('scheduledinterest', 'float'),
         ('principalpaid', 'float'),
         ('interestpaid', 'float'),
         ('latefee', 'float'),
         ('creditapplied', 'float'),
-        ('scheduledfinalbalance', 'float'), 
+        ('scheduledfinalbalance', 'float'),
         ('endingbalance', 'float'),
         ('status', 'str'),
     ]
@@ -144,32 +153,23 @@ def bootstrap_tables():
         table_name = f"schedule_{loan_id}"
 
         # 1) Ensure table exists
-
         sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" (LIKE amortization_template INCLUDING ALL);'
         try:
             supabase.rpc("run_sql", {"sql_text": sql}).execute()
             print(f"Ensured table {table_name} exists.")
             _reload_pgrst_schema(supabase)
-            row_count = _safe_row_count(supabase, table_name)
         except Exception as e:
             print(f"Error creating {table_name}: {e}")
             continue
 
-        # 2) Skip import if table already has data
-#       head_resp = supabase.from_(table_name).select("*", count="exact", head=True).execute()
+        # 2) Skip import if table already has data (but still record the loan)
         row_count = _safe_row_count(supabase, table_name)
         if row_count > 0:
             print(f"Table {table_name} already has {row_count} rows. Skipping import.")
-            continue
-
-#       existing_count = head_resp.count or 0
-        existing_count = row_count
-        if existing_count > 0:
-            print(f"Table {table_name} already has {existing_count} rows; skipping import.")
             record_new_loan(supabase, loan_id)
             continue
 
-        # 3) Load amortization schedule from CSV
+        # 3) Load amortization schedule from Google Sheets
         df_sched = get_google_sheet_df(loan_id)
         if df_sched is None or df_sched.empty:
             print(f"⚠️ Schedule CSV for '{loan_id}' is empty or unreadable; skipping.")
