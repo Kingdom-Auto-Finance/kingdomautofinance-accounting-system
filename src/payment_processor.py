@@ -102,7 +102,6 @@ def process_payments():
             sb.from_("payments_log")
               .update({
                   "processed": True,  # claim it
-                  "processed_at": datetime.utcnow().isoformat(),
               })
               .eq("id", pid)
               .eq("processed", False)  # only if still unprocessed
@@ -365,6 +364,38 @@ WHERE
                         break
 
             # ----------------------------
+            # After allocation loop
+            # ----------------------------
+
+            if allocation_done and remaining_amt > 0:
+                # Apply leftover as principal prepayment on the last row we touched
+                last_rownum = payment_rows[-1]
+                bb = Decimal(str(sched[last_rownum - 1].get("scheduledbalance") or 0.0))
+                extra_principal = float(remaining_amt)
+
+                sql = f'''
+                UPDATE public."{table}"
+                SET
+                    principalpaid = principalpaid + {extra_principal},
+                    endingbalance = endingbalance - {extra_principal}
+                WHERE "paymentnumber" = {last_rownum};
+                '''
+                sb.rpc("run_sql", {"sql_text": sql}).execute()
+
+                # Also carry forward to adjustedbalance
+                next_paymentnumber = last_rownum + 1
+                adj_sql = f'''
+                UPDATE public."{table}"
+                SET
+                    adjustedbalance = adjustedbalance - {extra_principal}
+                WHERE "paymentnumber" = {next_paymentnumber};
+                '''
+                sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
+
+                applied_total += remaining_amt
+                remaining_amt = Decimal('0.00')
+
+            # ----------------------------
             # NEW: Reconciliation check
             # ----------------------------
             if allocation_done:
@@ -377,6 +408,7 @@ WHERE
 
                 # Finalize: already processed=True from claim; just (re)stamp processed_at
                 sb.from_("payments_log").update({
+                    "processed": True,   # enforce final state
                     "processed_at": datetime.utcnow().isoformat()
                 }).eq("id", pid).execute()
 
