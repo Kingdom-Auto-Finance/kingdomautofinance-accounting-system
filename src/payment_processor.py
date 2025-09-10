@@ -215,8 +215,14 @@ def process_payments():
 
                 # Prepare scheduled values (PRESERVED)
                 due_dt = datetime.strptime(row["duedate"], "%Y-%m-%d").date()
-                bb = Decimal(str(row.get("scheduledbalance") or 0.0))
-                scheduled_interest = Decimal(str(row.get("scheduledinterest") or 0.0))
+                scheduled_balance = Decimal(str(row.get("scheduledbalance") or 0.0))
+                adjusted_balance  = Decimal(str(row.get("adjustedbalance")  or 0.0))
+                bb = adjusted_balance if adjusted_balance > 0 else scheduled_balance
+                raw_sched_interest = Decimal(str(row.get("scheduledinterest") or 0.0))
+                base_for_scale = scheduled_balance if scheduled_balance > 0 else bb
+                scheduled_interest = (raw_sched_interest * (bb / base_for_scale)) if base_for_scale > 0 else raw_sched_interest
+                # round to cents to avoid tiny drift
+                scheduled_interest = scheduled_interest.quantize(Decimal('0.01'))
                 scheduled_principal = Decimal(str(row.get("scheduledprincipal") or 0.0))
                 scheduled_due = scheduled_interest + scheduled_principal
                 prev_principal_paid = Decimal(str(row.get("principalpaid") or 0.0))
