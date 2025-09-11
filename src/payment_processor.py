@@ -217,12 +217,8 @@ def process_payments():
                 due_dt = datetime.strptime(row["duedate"], "%Y-%m-%d").date()
                 scheduled_balance = Decimal(str(row.get("scheduledbalance") or 0.0))
                 adjusted_balance  = Decimal(str(row.get("adjustedbalance")  or 0.0))
-                bb = adjusted_balance if adjusted_balance > 0 else scheduled_balance
-                raw_sched_interest = Decimal(str(row.get("scheduledinterest") or 0.0))
-                base_for_scale = scheduled_balance if scheduled_balance > 0 else bb
-                scheduled_interest = (raw_sched_interest * (bb / base_for_scale)) if base_for_scale > 0 else raw_sched_interest
-                # round to cents to avoid tiny drift
-                scheduled_interest = scheduled_interest.quantize(Decimal('0.01'))
+                bb = adjusted_balance if str(row.get("adjustedbalance")).strip().lower() not in ("", "none", "null") and row.get("adjustedbalance") is not None else scheduled_balance
+                scheduled_interest = Decimal(str(row.get("scheduledinterest") or 0.0))
                 scheduled_principal = Decimal(str(row.get("scheduledprincipal") or 0.0))
                 scheduled_due = scheduled_interest + scheduled_principal
                 prev_principal_paid = Decimal(str(row.get("principalpaid") or 0.0))
@@ -290,8 +286,44 @@ def process_payments():
                     new_latefee = total_latefee_paid
                     new_principal_paid = new_actual_paid - new_interest_paid - new_latefee
 
+                    # Recompute ending balance and status the same way (IF branch)
+                    ending_bal = bb - new_principal_paid
+                    new_status = "PAID" if (new_actual_paid + TOLERANCE >= scheduled_due or new_actual_paid >= scheduled_due * THRESHOLD_RATIO) else "PARTIAL"
+
+                    # UPDATE SQL (same structure as below-threshold branch)
+                    sql = f'''
+                    UPDATE public."{table}"
+                    SET
+                        actualpaymentdate = {repr(pay_date_str)},
+                        actualpaymentamount = {float(new_actual_paid)},
+                        principalpaid = {float(new_principal_paid)},
+                        interestpaid = {float(new_interest_paid)},
+                        latefee = {float(new_latefee)},
+                        endingbalance = {float(ending_bal)},
+                        status = '{new_status}'
+                    WHERE
+                        "paymentnumber" = {row['paymentnumber']};
+                    '''
+                    sb.rpc("run_sql", {"sql_text": sql}).execute()
+
+                    # Carry ending balance forward as adjustedbalance (same as below-threshold branch)
+                    next_paymentnumber = row["paymentnumber"] + 1
+                    adj_sql = f'''
+                    UPDATE public."{table}"
+                    SET
+                        adjustedbalance = {float(ending_bal)}
+                    WHERE
+                    "paymentnumber" = {next_paymentnumber};
+                    '''
+                    sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
+
+                    allocation_done = True
+                    payment_rows.append(row['paymentnumber'])
+                    applied_total += apply_amt
+                    remaining_amt -= apply_amt
+
                 else:
-                    # PRESERVED: below-threshold partial → apply only to this row
+                    # Safe partial path: allocate below threshold with the same calculation steps
                     apply_amt = remaining_amt
                     cumulative_total_paid = prev_actual_paid + apply_amt
 
@@ -315,46 +347,41 @@ def process_payments():
                     new_latefee = total_latefee_paid
                     new_principal_paid = new_actual_paid - new_interest_paid - new_latefee
 
-                # Recompute ending balance and status (PRESERVED)
-                ending_bal = bb - new_principal_paid
-                new_status = "PAID" if (new_actual_paid + TOLERANCE >= scheduled_due or new_actual_paid >= scheduled_due * THRESHOLD_RATIO) else "PARTIAL"
+                    # Recompute ending balance and status the same way
+                    ending_bal = bb - new_principal_paid
+                    new_status = "PAID" if (new_actual_paid + TOLERANCE >= scheduled_due or new_actual_paid >= scheduled_due * THRESHOLD_RATIO) else "PARTIAL"
 
-                # Update this row (PRESERVED)
-                sql = f'''
-UPDATE public."{table}"
-SET
-    actualpaymentdate = {repr(pay_date_str)},
-    actualpaymentamount = {float(new_actual_paid)},
-    principalpaid = {float(new_principal_paid)},
-    interestpaid = {float(new_interest_paid)},
-    latefee = {float(new_latefee)},
-    endingbalance = {float(ending_bal)},
-    status = '{new_status}'
-WHERE
-    "paymentnumber" = {row['paymentnumber']};
-'''
-                upd = sb.rpc("run_sql", {"sql_text": sql}).execute()
-                if hasattr(upd, 'error') and upd.error:
-                    logger.error(f"Payment {pid}: failed updating installment {row['paymentnumber']}: {upd.error}")
-                    continue
-
-                # Carry ending balance forward as adjustedbalance (PRESERVED)
-                next_paymentnumber = row["paymentnumber"] + 1
-                adj_sql = f'''
+                    # UPDATE SQL (identical structure as the IF branch)
+                    sql = f'''
                 UPDATE public."{table}"
                 SET
-                    adjustedbalance = {float(ending_bal)}
+                    actualpaymentdate = {repr(pay_date_str)},
+                    actualpaymentamount = {float(new_actual_paid)},
+                    principalpaid = {float(new_principal_paid)},
+                    interestpaid = {float(new_interest_paid)},
+                    latefee = {float(new_latefee)},
+                    endingbalance = {float(ending_bal)},
+                    status = '{new_status}'
                 WHERE
-                   "paymentnumber" = {next_paymentnumber};
+                    "paymentnumber" = {row['paymentnumber']};
                 '''
-                sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
+                    sb.rpc("run_sql", {"sql_text": sql}).execute()
 
-                allocation_done = True
-                payment_rows.append(row['paymentnumber'])
+                    # Carry ending balance forward as adjustedbalance (same as IF branch)
+                    next_paymentnumber = row["paymentnumber"] + 1
+                    adj_sql = f'''
+                    UPDATE public."{table}"
+                    SET
+                        adjustedbalance = {float(ending_bal)}
+                    WHERE
+                    "paymentnumber" = {next_paymentnumber};
+                    '''
+                    sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
 
-                # NEW: track amount actually applied before deducting
-                applied_total += apply_amt
-                remaining_amt -= apply_amt
+                    allocation_done = True
+                    payment_rows.append(row['paymentnumber'])
+                    applied_total += apply_amt
+                    remaining_amt -= apply_amt
 
                 # Enforce 50% rule stop (PRESERVED)
                 if (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO):
@@ -369,35 +396,33 @@ WHERE
                     if n < len(unpaid_rows) - 1 and extra < dynamic_extra_tolerance:
                         break
 
-            # ----------------------------
-            # After allocation loop
-            # ----------------------------
-
+            # If there is leftover money (e.g., gates stopped opening the next row),
+            # apply it directly to principal on the last touched row and cascade forward.
             if allocation_done and remaining_amt > 0:
-                # Apply leftover as principal prepayment on the last row we touched
                 last_rownum = payment_rows[-1]
-                bb = Decimal(str(sched[last_rownum - 1].get("scheduledbalance") or 0.0))
                 extra_principal = float(remaining_amt)
 
-                sql = f'''
+                # 1) Add remainder to actual + principal, reduce endingbalance (clamped to >= 0 if you prefer)
+                prepay_sql = f'''
                 UPDATE public."{table}"
                 SET
-                    principalpaid = principalpaid + {extra_principal},
-                    endingbalance = endingbalance - {extra_principal}
+                    actualpaymentamount = ROUND(COALESCE(actualpaymentamount, 0) + {extra_principal}, 2),
+                    principalpaid       = ROUND(COALESCE(principalpaid, 0)      + {extra_principal}, 2),
+                    endingbalance       = GREATEST(ROUND(COALESCE(endingbalance, 0) - {extra_principal}, 2), 0)
                 WHERE "paymentnumber" = {last_rownum};
                 '''
-                sb.rpc("run_sql", {"sql_text": sql}).execute()
+                sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
 
-                # Also carry forward to adjustedbalance
-                next_paymentnumber = last_rownum + 1
-                adj_sql = f'''
-                UPDATE public."{table}"
-                SET
-                    adjustedbalance = adjustedbalance - {extra_principal}
-                WHERE "paymentnumber" = {next_paymentnumber};
+                # 2) Push the new endingbalance into the next row as adjustedbalance
+                next_rownum = last_rownum + 1
+                cascade_sql = f'''
+                UPDATE public."{table}" AS t
+                SET adjustedbalance = (SELECT endingbalance FROM public."{table}" WHERE paymentnumber = {last_rownum})
+                WHERE t."paymentnumber" = {next_rownum};
                 '''
-                sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
+                sb.rpc("run_sql", {"sql_text": cascade_sql}).execute()
 
+                # Consume the leftover
                 applied_total += remaining_amt
                 remaining_amt = Decimal('0.00')
 
