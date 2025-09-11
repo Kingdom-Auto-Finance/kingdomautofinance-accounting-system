@@ -441,10 +441,24 @@ def process_payments():
                                     COALESCE(principalpaid, 0)::numeric      + CAST({extra_principal} AS numeric), 2
                                 ),
                                 endingbalance       = CASE
-                                    WHEN (COALESCE(endingbalance, 0)::numeric - CAST({extra_principal} AS numeric)) < 0
+                                    WHEN (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                        - CAST({extra_principal} AS numeric)) < 0
                                         THEN 0
                                     ELSE ROUND(
-                                        COALESCE(endingbalance, 0)::numeric - CAST({extra_principal} AS numeric), 2
+                                        (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                        - CAST({extra_principal} AS numeric)
+                                        )::numeric, 2
+                                    )
+                                END,
+                                -- minimal required sync so next computations use the same new number
+                                adjustedbalance     = CASE
+                                    WHEN (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                        - CAST({extra_principal} AS numeric)) < 0
+                                        THEN 0
+                                    ELSE ROUND(
+                                        (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                        - CAST({extra_principal} AS numeric)
+                                        )::numeric, 2
                                     )
                                 END
                             WHERE "paymentnumber" = {current_rownum};
@@ -453,8 +467,8 @@ def process_payments():
                             sweep_remaining = Decimal('0.00')
                             break
                         else:
-                            current_rownum = current_rownum + 1
-                            continue
+                                current_rownum = current_rownum + 1
+                                continue
 
                     # Apply as much as possible to this row (but don't go below 0)
                     apply_here = sweep_remaining if sweep_remaining <= cur_end else cur_end
@@ -470,10 +484,24 @@ def process_payments():
                             COALESCE(principalpaid, 0)::numeric      + CAST({extra_principal} AS numeric), 2
                         ),
                         endingbalance       = CASE
-                            WHEN (COALESCE(endingbalance, 0)::numeric - CAST({extra_principal} AS numeric)) < 0
+                            WHEN (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                - CAST({extra_principal} AS numeric)) < 0
                                 THEN 0
                             ELSE ROUND(
-                                COALESCE(endingbalance, 0)::numeric - CAST({extra_principal} AS numeric), 2
+                                (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                - CAST({extra_principal} AS numeric)
+                                )::numeric, 2
+                            )
+                         END,
+                        -- minimal required sync so next computations use the same new number
+                        adjustedbalance     = CASE
+                            WHEN (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                - CAST({extra_principal} AS numeric)) < 0
+                                THEN 0
+                            ELSE ROUND(
+                                (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                - CAST({extra_principal} AS numeric)
+                                )::numeric, 2
                             )
                         END
                     WHERE "paymentnumber" = {current_rownum};
