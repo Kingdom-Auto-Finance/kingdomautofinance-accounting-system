@@ -434,13 +434,19 @@ def process_payments():
                             prepay_sql = f'''
                             UPDATE public."{table}"
                             SET
-                                actualpaymentamount = ROUND(COALESCE(actualpaymentamount, 0) + {extra_principal}, 2),
-                                principalpaid       = ROUND(COALESCE(principalpaid, 0)      + {extra_principal}, 2),
+                                actualpaymentamount = ROUND(
+                                    COALESCE(actualpaymentamount, 0)::numeric + CAST({extra_principal} AS numeric), 2
+                                ),
+                                principalpaid       = ROUND(
+                                    COALESCE(principalpaid, 0)::numeric      + CAST({extra_principal} AS numeric), 2
+                                ),
                                 endingbalance       = CASE
-                                                        WHEN COALESCE(endingbalance, 0) - {extra_principal} < 0
-                                                            THEN 0
-                                                        ELSE ROUND(COALESCE(endingbalance, 0) - {extra_principal}, 2)
-                                                    END
+                                    WHEN (COALESCE(endingbalance, 0)::numeric - CAST({extra_principal} AS numeric)) < 0
+                                        THEN 0
+                                    ELSE ROUND(
+                                        COALESCE(endingbalance, 0)::numeric - CAST({extra_principal} AS numeric), 2
+                                    )
+                                END
                             WHERE "paymentnumber" = {current_rownum};
                             '''
                             sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
@@ -457,13 +463,19 @@ def process_payments():
                     prepay_sql = f'''
                     UPDATE public."{table}"
                     SET
-                        actualpaymentamount = ROUND(COALESCE(actualpaymentamount, 0) + {extra_principal}, 2),
-                        principalpaid       = ROUND(COALESCE(principalpaid, 0)      + {extra_principal}, 2),
+                        actualpaymentamount = ROUND(
+                            COALESCE(actualpaymentamount, 0)::numeric + CAST({extra_principal} AS numeric), 2
+                        ),
+                        principalpaid       = ROUND(
+                            COALESCE(principalpaid, 0)::numeric      + CAST({extra_principal} AS numeric), 2
+                        ),
                         endingbalance       = CASE
-                                                WHEN COALESCE(endingbalance, 0) < 0
-                                                    THEN 0
-                                                ELSE ROUND(COALESCE(endingbalance, 0), 2)
-                                            END
+                            WHEN (COALESCE(endingbalance, 0)::numeric - CAST({extra_principal} AS numeric)) < 0
+                                THEN 0
+                            ELSE ROUND(
+                                COALESCE(endingbalance, 0)::numeric - CAST({extra_principal} AS numeric), 2
+                            )
+                        END
                     WHERE "paymentnumber" = {current_rownum};
                     '''
                     sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
