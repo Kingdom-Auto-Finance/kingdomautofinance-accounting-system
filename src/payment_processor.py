@@ -396,136 +396,51 @@ def process_payments():
                     if n < len(unpaid_rows) - 1 and extra < dynamic_extra_tolerance:
                         break
 
-            # If there is leftover money (e.g., gates stopped opening the next row),
-            # sweep it across rows: reduce principal on the last touched row and keep
-            # cascading forward until the remainder is exhausted or schedule ends.
+            # If there is leftover money, post ALL of it as extra principal
+            # on the LAST row we updated, then sync ONLY the next row's start.
             if allocation_done and remaining_amt > 0:
-                sweep_remaining = remaining_amt
-                current_rownum = payment_rows[-1]
+                last_rownum = payment_rows[-1]
+                extra_principal = float(remaining_amt)
 
-                while sweep_remaining > Decimal('0.00'):
-                    # Get the current row's working balance:
-                    # prefer endingbalance; if null, fallback to adjustedbalance; else scheduledbalance.
-                    sel_sql = f'''
-                    SELECT COALESCE(
-                            endingbalance,
-                            CASE
-                                WHEN adjustedbalance IS NOT NULL AND adjustedbalance::text NOT IN ('', 'none', 'null')
-                                    THEN adjustedbalance
-                                ELSE scheduledbalance
-                            END
-                        ) AS cur_end
-                    FROM public."{table}"
-                    WHERE paymentnumber = {current_rownum};
-                    '''
-                    sel = sb.rpc("run_sql", {"sql_text": sel_sql}).execute()
-                    row_data = (getattr(sel, "data", None) or [{}])[0]
-                    cur_end = Decimal(str(row_data.get("cur_end") or 0))
+                # Post the remainder as extra principal to the last touched row
+                prepay_sql = f'''
+                UPDATE public."{table}"
+                SET
+                    actualpaymentamount = ROUND((COALESCE(actualpaymentamount, 0)::numeric + {extra_principal}::numeric), 2),
+                    principalpaid       = ROUND((COALESCE(principalpaid,       0)::numeric + {extra_principal}::numeric), 2),
+                    endingbalance       = GREATEST(
+                                            0,
+                                            ROUND((
+                                                COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                                - {extra_principal}::numeric
+                                            )::numeric, 2)
+                                        ),
+                    -- keep adjusted in sync with the same new ending (for this row)
+                    adjustedbalance     = GREATEST(
+                                            0,
+                                            ROUND((
+                                                COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                                - {extra_principal}::numeric
+                                            )::numeric, 2)
+                                        )
+                WHERE "paymentnumber" = {last_rownum};
+                '''
+                sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
 
-                    # If this row is already at 0, move to the next row if it exists;
-                    # if it's the last row, drop the remainder here (balance will stay clamped at 0).
-                    if cur_end <= 0:
-                        check_sql = f'''SELECT COUNT(1) AS cnt FROM public."{table}" WHERE paymentnumber = {current_rownum + 1};'''
-                        chk = sb.rpc("run_sql", {"sql_text": check_sql}).execute()
-                        cnt = int(((getattr(chk, "data", None) or [{}])[0].get("cnt")) or 0)
-                        if cnt == 0:
-                            # No next row: apply all remaining as extra principal (endingbalance remains at 0)
-                            extra_principal = float(sweep_remaining)
-                            prepay_sql = f'''
-                            UPDATE public."{table}"
-                            SET
-                                actualpaymentamount = ROUND(
-                                    COALESCE(actualpaymentamount, 0)::numeric + CAST({extra_principal} AS numeric), 2
-                                ),
-                                principalpaid       = ROUND(
-                                    COALESCE(principalpaid, 0)::numeric      + CAST({extra_principal} AS numeric), 2
-                                ),
-                                endingbalance       = CASE
-                                    WHEN (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                        - CAST({extra_principal} AS numeric)) < 0
-                                        THEN 0
-                                    ELSE ROUND(
-                                        (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                        - CAST({extra_principal} AS numeric)
-                                        )::numeric, 2
-                                    )
-                                END,
-                                -- minimal required sync so next computations use the same new number
-                                adjustedbalance     = CASE
-                                    WHEN (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                        - CAST({extra_principal} AS numeric)) < 0
-                                        THEN 0
-                                    ELSE ROUND(
-                                        (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                        - CAST({extra_principal} AS numeric)
-                                        )::numeric, 2
-                                    )
-                                END
-                            WHERE "paymentnumber" = {current_rownum};
-                            '''
-                            sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
-                            sweep_remaining = Decimal('0.00')
-                            break
-                        else:
-                                current_rownum = current_rownum + 1
-                                continue
+                # Sync ONLY the next row's starting balance to this row's new ending
+                next_rownum = last_rownum + 1
+                adj_sql = f'''
+                UPDATE public."{table}" AS nxt
+                SET adjustedbalance = (
+                    SELECT endingbalance FROM public."{table}" WHERE "paymentnumber" = {last_rownum}
+                )
+                WHERE nxt."paymentnumber" = {next_rownum};
+                '''
+                sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
 
-                    # Apply as much as possible to this row (but don't go below 0)
-                    apply_here = sweep_remaining if sweep_remaining <= cur_end else cur_end
-                    extra_principal = float(apply_here)
-
-                    prepay_sql = f'''
-                    UPDATE public."{table}"
-                    SET
-                        actualpaymentamount = ROUND(
-                            COALESCE(actualpaymentamount, 0)::numeric + CAST({extra_principal} AS numeric), 2
-                        ),
-                        principalpaid       = ROUND(
-                            COALESCE(principalpaid, 0)::numeric      + CAST({extra_principal} AS numeric), 2
-                        ),
-                        endingbalance       = CASE
-                            WHEN (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                - CAST({extra_principal} AS numeric)) < 0
-                                THEN 0
-                            ELSE ROUND(
-                                (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                - CAST({extra_principal} AS numeric)
-                                )::numeric, 2
-                            )
-                         END,
-                        -- minimal required sync so next computations use the same new number
-                        adjustedbalance     = CASE
-                            WHEN (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                - CAST({extra_principal} AS numeric)) < 0
-                                THEN 0
-                            ELSE ROUND(
-                                (COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                - CAST({extra_principal} AS numeric)
-                                )::numeric, 2
-                            )
-                        END
-                    WHERE "paymentnumber" = {current_rownum};
-                    '''
-                    sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
-
-                    # Cascade to next row's adjustedbalance
-                    next_rownum = current_rownum + 1
-                    cascade_sql = f'''
-                    UPDATE public."{table}" AS t
-                    SET adjustedbalance = (SELECT endingbalance FROM public."{table}" WHERE paymentnumber = {current_rownum})
-                    WHERE t."paymentnumber" = {next_rownum};
-                    '''
-                    sb.rpc("run_sql", {"sql_text": cascade_sql}).execute()
-
-                    # Reduce remainder and advance to next row if needed
-                    sweep_remaining -= apply_here
-                    if sweep_remaining > Decimal('0.00'):
-                        current_rownum = next_rownum
-
-                # Account for the swept dollars in reconciliation and zero out the remainder
+                # Reconciliation counters
                 applied_total += remaining_amt
                 remaining_amt = Decimal('0.00')
-
 
             # ----------------------------
             # NEW: Reconciliation check
