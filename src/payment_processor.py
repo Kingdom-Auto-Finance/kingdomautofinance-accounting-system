@@ -434,9 +434,9 @@ def process_payments():
                             prepay_sql = f'''
                             UPDATE public."{table}"
                             SET
-                                actualpaymentamount = ROUND(COALESCE(actualpaymentamount, 0) + {extra_principal}, 2),
-                                principalpaid       = ROUND(COALESCE(principalpaid, 0)      + {extra_principal}, 2),
-                                endingbalance       = GREATEST(ROUND(COALESCE(endingbalance, 0), 2), 0)
+                                actualpaymentamount = ROUND(COALESCE(actualpaymentamount, 0) + {extra_principal}, numeric, 2),
+                                principalpaid       = ROUND(COALESCE(principalpaid, 0)      + {extra_principal}, numeric, 2),
+                                endingbalance       = GREATEST(ROUND(COALESCE(endingbalance, 0), numeric, 2), 0)
                             WHERE "paymentnumber" = {current_rownum};
                             '''
                             sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
@@ -453,9 +453,9 @@ def process_payments():
                     prepay_sql = f'''
                     UPDATE public."{table}"
                     SET
-                        actualpaymentamount = ROUND(COALESCE(actualpaymentamount, 0) + {extra_principal}, 2),
-                        principalpaid       = ROUND(COALESCE(principalpaid, 0)      + {extra_principal}, 2),
-                        endingbalance       = GREATEST(ROUND(COALESCE(endingbalance, 0) - {extra_principal}, 2), 0)
+                        actualpaymentamount = ROUND(COALESCE(actualpaymentamount, 0) + {extra_principal}, numeric, 2),
+                        principalpaid       = ROUND(COALESCE(principalpaid, 0)      + {extra_principal}, numeric, 2),
+                        endingbalance       = GREATEST(ROUND(COALESCE(endingbalance, 0) - {extra_principal}, numeric, 2), 0)
                     WHERE "paymentnumber" = {current_rownum};
                     '''
                     sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
