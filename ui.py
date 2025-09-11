@@ -68,7 +68,7 @@ logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Au
 st.image(logo_url, width=250)
 st.markdown(
     "<h1 style='text-align:center'>Kingdom Accounting System</h1>"
-    "<p style='text-align:center;opacity:.75'>v1.12 • Last System Update: 09/11/2025</p>",
+    "<p style='text-align:center;opacity:.75'>v1.13 • Last System Update: 09/11/2025</p>",
     unsafe_allow_html=True
 )
 
