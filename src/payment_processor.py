@@ -100,11 +100,12 @@ def process_payments():
         finalized = False
         claim = (
             sb.from_("payments_log")
-            .update({"processed": True})          # claim it
-            .eq("id", pid)
-            .eq("processed", False)               # only if still unprocessed
-            .select("id")                         # <— ask PostgREST to return affected rows
-            .execute()
+              .update({
+                  "processed": True,  # claim it
+              })
+              .eq("id", pid)
+              .eq("processed", False)  # only if still unprocessed
+              .execute()
         )
         claimed_rows = getattr(claim, "data", None) or []
         if len(claimed_rows) == 0:
@@ -285,10 +286,9 @@ def process_payments():
                         .update({"processed": True})
                         .eq("id", rid)
                         .eq("processed", False)
-                        .select("id")                         # <— return affected row if claimed
                         .execute()
                     )
-                    if getattr(c, "data", None):               # non-empty means we claimed it
+                    if getattr(c, "data", None):
                         group_ids.append(rid)
                         payment_amt += r_amt
                         latest_dt = max(latest_dt, r_dt)
@@ -310,6 +310,7 @@ def process_payments():
                 cur_date = datetime.strptime(cur_date_str, "%Y-%m-%d").date()
                 if prev_due_dt < cur_date <= cur_due_dt:
                     current_row_already_opened = True
+
 
             # --- FINAL cap rule priority (applies regardless of aggregation) ---
             # We already computed:
