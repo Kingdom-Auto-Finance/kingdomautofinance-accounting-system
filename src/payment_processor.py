@@ -222,7 +222,7 @@ def process_payments():
                         next_row_already_opened = True
 
             # Are we between current due and next due?
-            between_cur_and_next = bool(next_due_dt and (cur_due_dt <= pay_dt <= next_due_dt))
+            between_cur_and_next = bool(next_due_dt and (cur_due_dt < pay_dt <= next_due_dt))
 
             # Build allowed_rows per the client rule:
             # - If between current and next due: allow at most TWO rows (current + next)
@@ -253,7 +253,7 @@ def process_payments():
             window_end = cur_due_dt
 
             # Only aggregate if THIS claimed payment is inside the window
-            pre_due_cluster = (window_start < pay_dt < window_end)
+            pre_due_cluster = (window_start < pay_dt <= window_end)
 
             if pre_due_cluster:
                 # Pull all UNPROCESSED payments for this loan inside the window
@@ -320,55 +320,6 @@ def process_payments():
                 # Payment after the next due: fall back to the usual cap
                 allowed_rows = max_rows
             # --- END FINAL cap rule ---
-
-            # --- NEW: reroute payments in (prev_due, current_due] into the previous row as principal ---
-            # If we're in the pre-due window for the current unpaid row, and there IS a previous row,
-            # do NOT open the current row. Combine the money as principal into the previous row instead.
-            if pre_due_cluster and cur_idx > 0 and remaining_amt > 0:
-                prev_rownum = sched[cur_idx - 1]["paymentnumber"]
-                extra_principal = float(remaining_amt)
-
-                prepay_prev_sql = f'''
-                UPDATE public."{table}"
-                SET
-                    actualpaymentamount = ROUND((COALESCE(actualpaymentamount, 0)::numeric + {extra_principal}::numeric), 2),
-                    principalpaid       = ROUND((COALESCE(principalpaid,       0)::numeric + {extra_principal}::numeric), 2),
-                    endingbalance       = GREATEST(
-                                            0,
-                                            ROUND((
-                                                COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                                - {extra_principal}::numeric
-                                            )::numeric, 2)
-                                        ),
-                    adjustedbalance     = GREATEST(
-                                            0,
-                                            ROUND((
-                                                COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                                - {extra_principal}::numeric
-                                            )::numeric, 2)
-                                        )
-                    -- status intentionally unchanged
-                WHERE "paymentnumber" = {prev_rownum};
-                '''
-                sb.rpc("run_sql", {"sql_text": prepay_prev_sql}).execute()
-
-                # Keep the chain in sync: the current unpaid row starts from the previous row’s new ending
-                cur_rownum = sched[cur_idx]["paymentnumber"]
-                adj_prev_sql = f'''
-                UPDATE public."{table}" AS cur
-                SET adjustedbalance = (
-                    SELECT endingbalance FROM public."{table}" WHERE "paymentnumber" = {prev_rownum}
-                )
-                WHERE cur."paymentnumber" = {cur_rownum};
-                '''
-                sb.rpc("run_sql", {"sql_text": adj_prev_sql}).execute()
-
-                # Accounting and short-circuit: we've applied the whole payment and won’t open a new due date
-                allocation_done = True
-                payment_rows = [prev_rownum]
-                applied_total += remaining_amt
-                remaining_amt = Decimal('0.00')
-            # --- END NEW reroute ---
 
             # (PRESERVED) Fetch other unprocessed payments for this loan (even if not used)
             _ = (
@@ -474,21 +425,13 @@ def process_payments():
                     else:
                         dynamic_extra_tolerance = Decimal('0.00')
 
-                    # OVERRIDES for the "between current and next due" window
-                    # 1) If we're on the CURRENT row (n == 0) and the payment date is between current_due and next_due,
-                    #    only apply what is needed to close the current row. Leave the rest for the next row.
-                    if n == 0 and between_cur_and_next:
+                    # OVERRIDE for client rule on the NEXT row inside (due_n, due_{n+1}]:
+                    # the first time we touch row n+1 this cycle, apply only up to its due.
+                    if n == 1 and between_cur_and_next and not next_row_already_opened:
                         needed_to_close = scheduled_due - prev_actual_paid
                         apply_amt = min(remaining_amt, needed_to_close)
-
-                    # 2) If we're on the NEXT row (n == 1), still in the window, and this is the first time touching it this cycle,
-                    #    only apply up to its due (do NOT spill to a third row).
-                    elif n == 1 and between_cur_and_next and not next_row_already_opened:
-                        needed_to_close = scheduled_due - prev_actual_paid
-                        apply_amt = min(remaining_amt, needed_to_close)
-
-                    # 3) Otherwise fall back to the preserved decision logic exactly as before.
                     else:
+                        # PRESERVED: your original decision condition
                         if (n == len(unpaid_rows) - 1) or (
                             n < len(unpaid_rows) - 1
                             and (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO)
@@ -618,21 +561,18 @@ def process_payments():
                     applied_total += apply_amt
                     remaining_amt -= apply_amt
 
-                # Enforce 50% rule stop (PRESERVED, but skip during the between-due window)
+                # Enforce 50% rule stop (PRESERVED)
                 if (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO):
                     try:
-                        extra
+                        extra  # may be undefined in below-threshold branch
                     except NameError:
                         extra = Decimal('0')
                     try:
                         dynamic_extra_tolerance
                     except NameError:
                         dynamic_extra_tolerance = Decimal('0')
-
-                    # Important: do NOT stop early when we're between current and next due.
-                    if not between_cur_and_next:
-                        if n < len(unpaid_rows) - 1 and extra < dynamic_extra_tolerance:
-                            break
+                    if n < len(unpaid_rows) - 1 and extra < dynamic_extra_tolerance:
+                        break
 
             # If there is leftover money, post ALL of it as extra principal
             # on the LAST row we updated, then sync ONLY the next row's start.
