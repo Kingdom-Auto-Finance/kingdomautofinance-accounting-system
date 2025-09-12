@@ -299,27 +299,23 @@ def process_payments():
 
                 # Use the aggregated total for allocation
                 remaining_amt = payment_amt
-            # --- END NEW ---
 
-            # --- FINAL cap rule priority (applies regardless of aggregation) ---
-            # We already computed:
-            #   window_start = prev_due_dt
-            #   pre_due_cluster = (window_start < pay_dt <= window_end)
-            #   between_cur_and_next = bool(next_due_dt and (cur_due_dt < pay_dt <= next_due_dt))
-            super_early = (pay_dt <= window_start)
-            if super_early:
-                # Payment is even before the previous due date: keep it on the current row only
-                allowed_rows = 1
-            elif pre_due_cluster:
-                # Payment is between previous due and current due: current row only
-                allowed_rows = 1
-            elif between_cur_and_next:
-                # Payment is after current due but before next due: at most two rows (current + next)
-                allowed_rows = 2
-            else:
-                # Payment after the next due: fall back to the usual cap
-                allowed_rows = max_rows
-            # --- END FINAL cap rule ---
+                # --- after we compute window_start (prev_due), window_end (cur_due),
+                #     and evaluate pre_due_cluster, and after we may have updated
+                #     pay_dt/pay_date_str/remaining_amt from the cluster ---
+
+                # Final cap rule priority with SUPER-EARLY guard:
+                #   - If payment date is even BEFORE the previous due (pay_dt <= window_start): 1 row (current only)
+                #   - Else if within (prev_due, current_due]: 1 row (current only)
+                #   - Else if within (current_due, next_due]: 2 rows (current + next)
+                #   - Else (after next due): default to max_rows
+                super_early = (pay_dt <= window_start)
+                if super_early:
+                    allowed_rows = 1
+                else:
+                    allowed_rows = 1 if pre_due_cluster else (2 if between_cur_and_next else max_rows)
+
+            # --- END NEW ---
 
             # (PRESERVED) Fetch other unprocessed payments for this loan (even if not used)
             _ = (
