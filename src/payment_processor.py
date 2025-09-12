@@ -112,7 +112,6 @@ def process_payments():
             logger.info(f"Payment {pid}: already claimed/processed elsewhere; skipping.")
             continue
         claimed = True
-        group_ids = [pid]  # NEW: all payment rows we’ll process together (for finalize/rollback)
 
         try:
             # Validate date and amount (PRESERVED)
@@ -199,78 +198,6 @@ def process_payments():
                 logger.info(f"Payment {pid}: all installments are paid for loan {loan_id}, treating as principal prepayment or extra.")
                 continue
 
-            # --- NEW: Pre-due window aggregation (combine all payments in (prev_due, next_due]) ---
-            # Identify the current unpaid installment (row n) and its due date
-            cur_idx, cur_row = unpaid_rows[0]
-            cur_due_dt = datetime.strptime(cur_row["duedate"], "%Y-%m-%d").date()
-
-            # Previous due = prior row’s due date (if there is one); otherwise, use a very early date
-            if cur_idx > 0:
-                prev_due_dt = datetime.strptime(sched[cur_idx - 1]["duedate"], "%Y-%m-%d").date()
-            else:
-                prev_due_dt = datetime(1900, 1, 1).date()  # safe baseline for first installment
-
-            # Build the window (prev_due, next_due] for row n
-            window_start = prev_due_dt
-            window_end = cur_due_dt
-
-            # Only aggregate if THIS claimed payment is inside the window
-            pre_due_cluster = (window_start < pay_dt <= window_end)
-
-            if pre_due_cluster:
-                # Pull all UNPROCESSED payments for this loan inside the window
-                cluster_resp = (
-                    sb.from_("payments_log")
-                    .select("id,payment_date,payment_amount")
-                    .eq("loan_id", loan_id)
-                    .eq("processed", False)
-                    .gt("payment_date", window_start.isoformat())
-                    .lte("payment_date", window_end.isoformat())
-                    .order("payment_date")
-                    .execute()
-                )
-                cluster_rows = cluster_resp.data or []
-
-                # Sum the amounts and atomically claim the extra rows too
-                latest_dt = pay_dt
-                for r in cluster_rows:
-                    rid = r["id"]
-                    r_dt = datetime.strptime(r["payment_date"], "%Y-%m-%d").date()
-                    r_amt = Decimal(str(r["payment_amount"]))
-
-                    if rid == pid:
-                        latest_dt = max(latest_dt, r_dt)
-                        continue  # already claimed
-
-                    # Atomically claim this row (same pattern as the primary claim)
-                    c = (
-                        sb.from_("payments_log")
-                        .update({"processed": True})
-                        .eq("id", rid)
-                        .eq("processed", False)
-                        .execute()
-                    )
-                    if getattr(c, "data", None):
-                        group_ids.append(rid)
-                        payment_amt += r_amt
-                        latest_dt = max(latest_dt, r_dt)
-
-                # Use the LATEST actual date in the window for posting
-                pay_dt = latest_dt
-                pay_date_str = pay_dt.isoformat()
-
-                # Use the aggregated total for allocation
-                remaining_amt = payment_amt
-
-                # Now that pre_due_cluster is known, cap allocation to 1 row inside the window
-                allowed_rows = 1 if pre_due_cluster else max_rows
-
-            # --- END NEW ---
-
-            # Ensure allowed_rows is defined when we're NOT in the pre-due window
-            if not pre_due_cluster:
-                allowed_rows = max_rows
-
             # (PRESERVED) Fetch other unprocessed payments for this loan (even if not used)
             _ = (
                 sb.from_("payments_log")
@@ -283,7 +210,7 @@ def process_payments():
 
             # Step 4: Allocate the payment (PRESERVED business logic)
             for n, (idx, row) in enumerate(unpaid_rows):
-                if n >= allowed_rows or remaining_amt <= 0:
+                if n >= max_rows or remaining_amt <= 0:
                     break  # Do not allocate to more than the max allowed
 
                 # Prepare scheduled values (PRESERVED)
@@ -527,11 +454,10 @@ def process_payments():
                     continue  # finally will revert the claim
 
                 # Finalize: already processed=True from claim; just (re)stamp processed_at
-                for gid in group_ids:
-                    sb.from_("payments_log").update({
-                        "processed": True,
-                        "processed_at": datetime.utcnow().isoformat()
-                    }).eq("id", gid).execute()
+                sb.from_("payments_log").update({
+                    "processed": True,   # enforce final state
+                    "processed_at": datetime.utcnow().isoformat()
+                }).eq("id", pid).execute()
 
                 logger.info(
                     f"Payment {pid}: payment of {float(payment_amt)} allocated across rows {payment_rows}"
@@ -543,11 +469,10 @@ def process_payments():
         finally:
             # If claimed but not finalized, revert the claim so it can be safely retried
             if claimed and not finalized:
-                for gid in group_ids:
-                    sb.from_("payments_log").update({
-                        "processed": False,
-                        "processed_at": None
-                    }).eq("id", gid).execute()
+                sb.from_("payments_log").update({
+                    "processed": False,
+                    "processed_at": None
+                }).eq("id", pid).execute()
 
     # Report missing schedules (PRESERVED)
     for lid in sorted(set(missing)):
