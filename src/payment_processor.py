@@ -300,20 +300,8 @@ def process_payments():
                 # Use the aggregated total for allocation
                 remaining_amt = payment_amt
 
-                # --- after we compute window_start (prev_due), window_end (cur_due),
-                #     and evaluate pre_due_cluster, and after we may have updated
-                #     pay_dt/pay_date_str/remaining_amt from the cluster ---
-
-                # Final cap rule priority with SUPER-EARLY guard:
-                #   - If payment date is even BEFORE the previous due (pay_dt <= window_start): 1 row (current only)
-                #   - Else if within (prev_due, current_due]: 1 row (current only)
-                #   - Else if within (current_due, next_due]: 2 rows (current + next)
-                #   - Else (after next due): default to max_rows
-                super_early = (pay_dt <= window_start)
-                if super_early:
-                    allowed_rows = 1
-                else:
-                    allowed_rows = 1 if pre_due_cluster else (2 if between_cur_and_next else max_rows)
+                # Final cap rule priority: pre-due → 1 row; between current & next due → 2 rows; else max_rows
+                allowed_rows = 1 if pre_due_cluster else (2 if between_cur_and_next else max_rows)
 
             # --- END NEW ---
 
