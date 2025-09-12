@@ -198,6 +198,77 @@ def process_payments():
                 logger.info(f"Payment {pid}: all installments are paid for loan {loan_id}, treating as principal prepayment or extra.")
                 continue
 
+            # --- NEW: Curtailment rule (pre-next-due & > 2x scheduledpayment) ---
+            # If the payment date is BEFORE the next unpaid due date, and the amount is > 2x that row's scheduledpayment,
+            # then add this entire payment as EXTRA PRINCIPAL to the LAST PAID row.
+            try:
+                next_unpaid_row = unpaid_rows[0][1]  # the next due that is still unpaid
+                next_due_dt = datetime.strptime(next_unpaid_row["duedate"], "%Y-%m-%d").date()
+                scheduled_payment_due = Decimal(str(next_unpaid_row.get("scheduledpayment") or 0))
+            except Exception:
+                next_due_dt = None
+                scheduled_payment_due = Decimal('0')
+
+            if (
+                next_due_dt
+                and pay_dt < next_due_dt                          # actualpaymentdate is BEFORE the next unpaid due date
+                and scheduled_payment_due > 0
+                and payment_amt > (scheduled_payment_due * Decimal('2'))  # strictly bigger than 2x scheduledpayment
+            ):
+                # Find the LAST row already marked as PAID
+                last_paid_row = None
+                for r in reversed(sched):  # sched is ordered by paymentnumber
+                    if str(r.get("status", "")).upper() == "PAID":
+                        last_paid_row = r
+                        break
+
+                if last_paid_row:
+                    last_rownum = last_paid_row["paymentnumber"]
+                    extra_principal = float(payment_amt)  # the whole payment becomes extra principal on the last PAID row
+
+                    # 1) Add to actualpaymentamount and principalpaid; 2) reduce ending/adjusted balance by the same amount
+                    prepay_sql = f'''
+                    UPDATE public."{table}"
+                    SET
+                        actualpaymentamount = ROUND((COALESCE(actualpaymentamount, 0)::numeric + {extra_principal}::numeric), 2),
+                        principalpaid       = ROUND((COALESCE(principalpaid,       0)::numeric + {extra_principal}::numeric), 2),
+                        endingbalance       = GREATEST(
+                                                0,
+                                                ROUND((
+                                                    COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                                    - {extra_principal}::numeric
+                                                )::numeric, 2)
+                                            ),
+                        adjustedbalance     = GREATEST(
+                                                0,
+                                                ROUND((
+                                                    COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
+                                                    - {extra_principal}::numeric
+                                                )::numeric, 2)
+                                            )
+                        -- status intentionally unchanged
+                    WHERE "paymentnumber" = {last_rownum};
+                    '''
+                    sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
+
+                    # Keep the chain in sync: make the NEXT row start from this updated ending balance
+                    next_rownum = last_rownum + 1
+                    adj_sql = f'''
+                    UPDATE public."{table}"
+                    SET adjustedbalance = (
+                        SELECT endingbalance FROM public."{table}" WHERE "paymentnumber" = {last_rownum}
+                    )
+                    WHERE "paymentnumber" = {next_rownum};
+                    '''
+                    sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
+
+                    # Bookkeeping so the payment finalizes cleanly (no further allocation)
+                    allocation_done = True
+                    payment_rows = [last_rownum]
+                    applied_total += payment_amt
+                    remaining_amt = Decimal('0.00')
+            # --- END NEW Curtailment rule ---
+
             # (PRESERVED) Fetch other unprocessed payments for this loan (even if not used)
             _ = (
                 sb.from_("payments_log")
