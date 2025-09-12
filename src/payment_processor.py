@@ -2,13 +2,31 @@
 
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from decimal import Decimal
 
 import config
 from amortization_calculator import calculate_principal_and_status
 from supabase import create_client
 from google.cloud import secretmanager
+
+# -----------------------------
+# ADD: Strict Curtailment Gate (Window + 2x Payment Amount)
+# -----------------------------
+
+def is_allowed_curtailment(payment_date: date,
+                           payment_amount: Decimal,
+                           amount_due: Decimal,
+                           is_date_in_curtailment_window) -> bool:
+    """
+    Curtailment is allowed ONLY when:
+      - payment_date is inside the curtailment window; AND
+      - the single payment amount >= 2 * amount_due.
+    """
+    two_x = (amount_due * Decimal("2")).quantize(Decimal("0.01"))
+    if not isinstance(payment_amount, Decimal):
+        payment_amount = Decimal(str(payment_amount))
+    return bool(is_date_in_curtailment_window(payment_date) and payment_amount >= two_x)
 
 # -----------------------------
 # Preserved configuration
@@ -221,6 +239,23 @@ def process_payments():
                     if cur_due_dt < nr_date <= next_due_dt:
                         next_row_already_opened = True
 
+            # === ADD: define the curtailment window function for THIS payment ===
+            # In your code, "curtailment window" = strictly between current due and next due: (cur_due_dt, next_due_dt]
+            def _is_in_curtailment_window(d):
+                return bool(next_due_dt and (cur_due_dt < d <= next_due_dt))
+
+            # Compute the CURRENT installment's amount due (principal + interest)
+            current_amount_due = Decimal(str(cur_row.get("scheduledinterest") or 0)) + \
+                                Decimal(str(cur_row.get("scheduledprincipal") or 0))
+
+            # Decide if THIS payment is allowed to curtail
+            allowed_curtailment = is_allowed_curtailment(
+                payment_date=pay_dt,
+                payment_amount=payment_amt,
+                amount_due=current_amount_due,
+                is_date_in_curtailment_window=_is_in_curtailment_window
+            )
+
             # Are we between current due and next due?
             between_cur_and_next = bool(next_due_dt and (cur_due_dt <= pay_dt <= next_due_dt))
 
@@ -231,8 +266,14 @@ def process_payments():
             # If we are in your pre-due aggregation window from earlier (optional feature), keep it to 1 row:
             try:
                 pre_due_cluster  # may not exist if you never enabled the earlier pre-due block
-                if pre_due_cluster:
+                if allowed_curtailment and pre_due_cluster:
                     allowed_rows = 1
+                
+                # === ADD: force no-forwarding unless allowed ===
+                if not allowed_curtailment:
+                    # Only the current row can be touched; do not open next rows
+                    allowed_rows = 1
+
             except NameError:
                 pass
             # --- END NEW ---
@@ -255,7 +296,7 @@ def process_payments():
             # Only aggregate if THIS claimed payment is inside the window
             pre_due_cluster = (window_start < pay_dt < window_end)
 
-            if pre_due_cluster:
+            if allowed_curtailment and pre_due_cluster:
                 # Pull all UNPROCESSED payments for this loan inside the window
                 cluster_resp = (
                     sb.from_("payments_log")
@@ -332,6 +373,10 @@ def process_payments():
                 allowed_rows = max_rows
             # --- END FINAL cap rule ---
 
+            # Enforce strict curtailment gate again (no forward rows unless allowed)
+            if not allowed_curtailment:
+                allowed_rows = 1
+
             # --- NEW: reroute payments in (prev_due, current_due] into the previous row as principal ---
             # If we're in the pre-due window for the current unpaid row, and there IS a previous row,
             # do NOT open the current row. Combine the money as principal into the previous row instead.
@@ -383,7 +428,7 @@ def process_payments():
 
             # If we are between current and next due AND the current row was already opened in this cycle,
             # route ALL of this payment to principal on the CURRENT row (row n), do not open the next row.
-            if between_cur_and_next and current_row_already_opened and remaining_amt > 0:
+            if allowed_curtailment and between_cur_and_next and current_row_already_opened and remaining_amt > 0:
                 cur_rownum = cur_row["paymentnumber"]
                 extra_principal = float(remaining_amt)
 
@@ -457,7 +502,7 @@ def process_payments():
                 # --- NEW: if we're on the NEXT row (n==1), inside (due_n, due_{n+1}],
                 # and the next row was already opened this cycle, then ALL remaining goes
                 # to principal on row n+1. We do NOT recognize a third due date.
-                if n == 1 and between_cur_and_next and next_row_already_opened:
+                if allowed_curtailment and n == 1 and between_cur_and_next and next_row_already_opened:
                     apply_amt = remaining_amt
                     extra_principal = float(apply_amt)
 
@@ -534,13 +579,13 @@ def process_payments():
                     # OVERRIDES for the "between current and next due" window
                     # 1) If we're on the CURRENT row (n == 0) and the payment date is between current_due and next_due,
                     #    only apply what is needed to close the current row. Leave the rest for the next row.
-                    if n == 0 and between_cur_and_next:
+                    if allowed_curtailment and n == 0 and between_cur_and_next:
                         needed_to_close = scheduled_due - prev_actual_paid
                         apply_amt = min(remaining_amt, needed_to_close)
 
                     # 2) If we're on the NEXT row (n == 1), still in the window, and this is the first time touching it this cycle,
                     #    only apply up to its due (do NOT spill to a third row).
-                    elif n == 1 and between_cur_and_next and not next_row_already_opened:
+                    elif allowed_curtailment and n == 1 and between_cur_and_next and not next_row_already_opened:
                         needed_to_close = scheduled_due - prev_actual_paid
                         apply_amt = min(remaining_amt, needed_to_close)
 
