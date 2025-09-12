@@ -199,44 +199,6 @@ def process_payments():
                 logger.info(f"Payment {pid}: all installments are paid for loan {loan_id}, treating as principal prepayment or extra.")
                 continue
 
-            # --- NEW: determine next due and whether next row is already opened in this cycle ---
-
-            # Current unpaid row (row n) and its due date
-            cur_idx, cur_row = unpaid_rows[0]
-            cur_due_dt = datetime.strptime(cur_row["duedate"], "%Y-%m-%d").date()
-
-            # Next row (row n+1), if it exists
-            has_next_row = len(unpaid_rows) > 1
-            next_due_dt = None
-            next_row_already_opened = False
-
-            if has_next_row:
-                next_row = unpaid_rows[1][1]
-                next_due_dt = datetime.strptime(next_row["duedate"], "%Y-%m-%d").date()
-                # "Already opened in this cycle" = any amount posted to row n+1 with a date in (cur_due_dt, next_due_dt]
-                nr_amt = Decimal(str(next_row.get("actualpaymentamount") or 0))
-                nr_date_str = next_row.get("actualpaymentdate")
-                if nr_amt > 0 and nr_date_str:
-                    nr_date = datetime.strptime(nr_date_str, "%Y-%m-%d").date()
-                    if cur_due_dt < nr_date <= next_due_dt:
-                        next_row_already_opened = True
-
-            # Are we between current due and next due?
-            between_cur_and_next = bool(next_due_dt and (cur_due_dt < pay_dt <= next_due_dt))
-
-            # Build allowed_rows per the client rule:
-            # - If between current and next due: allow at most TWO rows (current + next)
-            # - Otherwise: keep the previous behavior (max_rows)
-            allowed_rows = 2 if between_cur_and_next else max_rows
-            # If we are in your pre-due aggregation window from earlier (optional feature), keep it to 1 row:
-            try:
-                pre_due_cluster  # may not exist if you never enabled the earlier pre-due block
-                if pre_due_cluster:
-                    allowed_rows = 1
-            except NameError:
-                pass
-            # --- END NEW ---
-
             # --- NEW: Pre-due window aggregation (combine all payments in (prev_due, next_due]) ---
             # Identify the current unpaid installment (row n) and its due date
             cur_idx, cur_row = unpaid_rows[0]
@@ -300,10 +262,14 @@ def process_payments():
                 # Use the aggregated total for allocation
                 remaining_amt = payment_amt
 
-                # Final cap rule priority: pre-due → 1 row; between current & next due → 2 rows; else max_rows
-                allowed_rows = 1 if pre_due_cluster else (2 if between_cur_and_next else max_rows)
+                # Now that pre_due_cluster is known, cap allocation to 1 row inside the window
+                allowed_rows = 1 if pre_due_cluster else max_rows
 
             # --- END NEW ---
+
+            # Ensure allowed_rows is defined when we're NOT in the pre-due window
+            if not pre_due_cluster:
+                allowed_rows = max_rows
 
             # (PRESERVED) Fetch other unprocessed payments for this loan (even if not used)
             _ = (
@@ -331,55 +297,6 @@ def process_payments():
                 prev_principal_paid = Decimal(str(row.get("principalpaid") or 0.0))
                 prev_latefee = Decimal(str(row.get("latefee") or 0.0))
                 prev_actual_paid = Decimal(str(row.get("actualpaymentamount") or 0.0))
-
-                # --- NEW: if we're on the NEXT row (n==1), inside (due_n, due_{n+1}],
-                # and the next row was already opened this cycle, then ALL remaining goes
-                # to principal on row n+1. We do NOT recognize a third due date.
-                if n == 1 and between_cur_and_next and next_row_already_opened:
-                    apply_amt = remaining_amt
-                    extra_principal = float(apply_amt)
-
-                    prepay_sql = f'''
-                    UPDATE public."{table}"
-                    SET
-                        actualpaymentamount = ROUND((COALESCE(actualpaymentamount, 0)::numeric + {extra_principal}::numeric), 2),
-                        principalpaid       = ROUND((COALESCE(principalpaid,       0)::numeric + {extra_principal}::numeric), 2),
-                        endingbalance       = GREATEST(
-                                                0,
-                                                ROUND((
-                                                    COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                                    - {extra_principal}::numeric
-                                                )::numeric, 2)
-                                            ),
-                        adjustedbalance     = GREATEST(
-                                                0,
-                                                ROUND((
-                                                    COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                                    - {extra_principal}::numeric
-                                                )::numeric, 2)
-                                            )
-                        -- NOTE: we intentionally do NOT change 'status' here
-                    WHERE "paymentnumber" = {row['paymentnumber']};
-                    '''
-                    sb.rpc("run_sql", {"sql_text": prepay_sql}).execute()
-
-                    # Chain sync for the following row (n+2)
-                    next_paymentnumber = row["paymentnumber"] + 1
-                    adj_sql = f'''
-                    UPDATE public."{table}"
-                    SET adjustedbalance = (
-                        SELECT endingbalance FROM public."{table}" WHERE "paymentnumber" = {row['paymentnumber']}
-                    )
-                    WHERE "paymentnumber" = {next_paymentnumber};
-                    '''
-                    sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
-
-                    allocation_done = True
-                    payment_rows.append(row['paymentnumber'])
-                    applied_total += apply_amt
-                    remaining_amt -= apply_amt
-                    break  # stop here; we never open a third due date
-                # --- END NEW ---
 
                 # Grace/late fee (PRESERVED)
                 grace_end = due_dt + timedelta(days=config.DEFAULT_GRACE_PERIOD_DAYS)
@@ -409,22 +326,16 @@ def process_payments():
                     else:
                         dynamic_extra_tolerance = Decimal('0.00')
 
-                    # OVERRIDE for client rule on the NEXT row inside (due_n, due_{n+1}]:
-                    # the first time we touch row n+1 this cycle, apply only up to its due.
-                    if n == 1 and between_cur_and_next and not next_row_already_opened:
+                    # PRESERVED: your exact decision condition
+                    if (n == len(unpaid_rows) - 1) or (
+                        n < len(unpaid_rows) - 1
+                        and (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO)
+                        and extra < dynamic_extra_tolerance
+                    ):
+                        apply_amt = remaining_amt
+                    else:
                         needed_to_close = scheduled_due - prev_actual_paid
                         apply_amt = min(remaining_amt, needed_to_close)
-                    else:
-                        # PRESERVED: your original decision condition
-                        if (n == len(unpaid_rows) - 1) or (
-                            n < len(unpaid_rows) - 1
-                            and (cumulative_paid + TOLERANCE >= scheduled_due or cumulative_paid >= scheduled_due * THRESHOLD_RATIO)
-                            and extra < dynamic_extra_tolerance
-                        ):
-                            apply_amt = remaining_amt
-                        else:
-                            needed_to_close = scheduled_due - prev_actual_paid
-                            apply_amt = min(remaining_amt, needed_to_close)
 
                     cumulative_total_paid = prev_actual_paid + apply_amt
 
