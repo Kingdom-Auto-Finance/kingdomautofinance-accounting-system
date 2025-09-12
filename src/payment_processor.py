@@ -301,16 +301,6 @@ def process_payments():
                 remaining_amt = payment_amt
             # --- END NEW ---
 
-            # NEW: was the CURRENT (unpaid) row already opened earlier in this cycle?
-            # "This cycle" for the current row is the window (prev_due_dt, cur_due_dt]
-            current_row_already_opened = False
-            cur_amt = Decimal(str(cur_row.get("actualpaymentamount") or 0))
-            cur_date_str = cur_row.get("actualpaymentdate")
-            if cur_amt > 0 and cur_date_str:
-                cur_date = datetime.strptime(cur_date_str, "%Y-%m-%d").date()
-                if prev_due_dt < cur_date <= cur_due_dt:
-                    current_row_already_opened = True
-
             # --- FINAL cap rule priority (applies regardless of aggregation) ---
             # We already computed:
             #   window_start = prev_due_dt
@@ -379,52 +369,6 @@ def process_payments():
                 applied_total += remaining_amt
                 remaining_amt = Decimal('0.00')
             # --- END NEW reroute ---
-
-            # If we are between current and next due AND the current row was already opened in this cycle,
-            # route ALL of this payment to principal on the CURRENT row (row n), do not open the next row.
-            if between_cur_and_next and current_row_already_opened and remaining_amt > 0:
-                cur_rownum = cur_row["paymentnumber"]
-                extra_principal = float(remaining_amt)
-
-                prepay_cur_sql = f'''
-                UPDATE public."{table}"
-                SET
-                    actualpaymentamount = ROUND((COALESCE(actualpaymentamount, 0)::numeric + {extra_principal}::numeric), 2),
-                    principalpaid       = ROUND((COALESCE(principalpaid,       0)::numeric + {extra_principal}::numeric), 2),
-                    endingbalance       = GREATEST(
-                                            0,
-                                            ROUND((
-                                                COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                                - {extra_principal}::numeric
-                                            )::numeric, 2)
-                                        ),
-                    adjustedbalance     = GREATEST(
-                                            0,
-                                            ROUND((
-                                                COALESCE(adjustedbalance, endingbalance, scheduledbalance, 0)::numeric
-                                                - {extra_principal}::numeric
-                                            )::numeric, 2)
-                                        )
-                    -- status intentionally unchanged
-                WHERE "paymentnumber" = {cur_rownum};
-                '''
-                sb.rpc("run_sql", {"sql_text": prepay_cur_sql}).execute()
-
-                # Keep the chain in sync: the next row's adjustedbalance starts from this row’s new ending
-                next_rownum = cur_rownum + 1
-                adj_sql = f'''
-                UPDATE public."{table}" AS nxt
-                SET adjustedbalance = (
-                    SELECT endingbalance FROM public."{table}" WHERE "paymentnumber" = {cur_rownum}
-                )
-                WHERE nxt."paymentnumber" = {next_rownum};
-                '''
-                sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
-
-                allocation_done = True
-                payment_rows = [cur_rownum]
-                applied_total += remaining_amt
-                remaining_amt = Decimal('0.00')
 
             # (PRESERVED) Fetch other unprocessed payments for this loan (even if not used)
             _ = (
