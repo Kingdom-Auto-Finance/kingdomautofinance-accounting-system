@@ -104,15 +104,19 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
     res = supabase.from_("payments_log").select("loan_id, payment_date, payment_amount").execute()
     df_db = pd.DataFrame(res.data)
     
-    if not df_db.empty:
+    # --- FIX: Handle empty DataFrame from database query ---
+    if df_db.empty:
+        db_counts = pd.Series(dtype='int64') # Create an empty Series for the counts
+    else:
         df_db['loan_id'] = df_db['loan_id'].astype(str).str.lower().str.strip()
         df_db['payment_amount'] = df_db['payment_amount'].round(2)
         df_db = df_db.dropna(subset=['loan_id', 'payment_date', 'payment_amount'])
+        # --- The error-prone line moved here ---
+        db_counts = df_db.groupby(['loan_id', 'payment_date', 'payment_amount']).size()
 
     # --- 4. Count payments by a unique transaction key for comparison ---
     # Key for comparison is a tuple of (loan_id, payment_date, payment_amount)
     source_counts = df_source.groupby(['loan_id', 'payment_date', 'payment_amount']).size()
-    db_counts = df_db.groupby(['loan_id', 'payment_date', 'payment_amount']).size()
 
     # --- 5. Determine which payments are new ---
     payments_to_insert = []
