@@ -13,7 +13,7 @@ import re
 # =========================
 # A simple hardcoded password. For production use, please use st.secrets.
 # Example: st.secrets["password"]
-APP_PASSWORD = "kingdom_auto_finance_2025"
+APP_PASSWORD = "Kingdom2025!$$"
 
 # =========================
 # Helpers
@@ -75,7 +75,7 @@ logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Au
 st.markdown(
     f"<div style='text-align:center; margin-top:-10px; margin-bottom:20px;'><img src='{logo_url}' width='250'></div>"
     "<h1 style='text-align:center'>Kingdom Accounting System</h1>"
-    "<p style='text-align:center;opacity:.75'>v1.33 • Last System Update: 09/25/2025</p>",
+    "<p style='text-align:center;opacity:.75'>v1.34 • Last System Update: 09/25/2025</p>",
     unsafe_allow_html=True
 )
 
