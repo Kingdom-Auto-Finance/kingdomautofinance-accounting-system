@@ -35,6 +35,37 @@ TARGET_AMOUNT_COL_LOWER = 'paymentamount'
 # --- CONSTANT FOR SOURCE SHEET TAB NAME ---
 SOURCE_SHEET_TAB_NAME = "Payments"
 
+def fetch_all_payments_paginated(supabase_client, table_name):
+    """
+    Fetches all records from a Supabase table using pagination.
+    Returns a list of all records.
+    """
+    all_records = []
+    last_id = None
+    page_size = 1000  # Supabase default limit, also a good batch size
+
+    while True:
+        query = supabase_client.from_(table_name).select("id, loan_id, payment_date, payment_amount").order("id").limit(page_size)
+        
+        # Filter for records after the last ID from the previous page
+        if last_id:
+            query = query.gt("id", last_id)
+        
+        res = query.execute()
+
+        if res.data:
+            records = res.data
+            all_records.extend(records)
+            last_id = records[-1]["id"]
+            
+            # Break if we've fetched the last page
+            if len(records) < page_size:
+                break
+        else:
+            # No data found, end the loop
+            break
+            
+    return all_records
 
 def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_all=False, fetch_recent_days=None):
     """
@@ -98,9 +129,9 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
         logger.info("No valid payment rows found in the source sheet after cleaning.")
         return True
 
-    # --- 3. Load and preprocess existing payments from Supabase ---
-    res = supabase.from_("payments_log").select("loan_id, payment_date, payment_amount").execute()
-    df_db = pd.DataFrame(res.data)
+    # --- 3. Load and preprocess existing payments from Supabase using pagination ---
+    all_db_payments = fetch_all_payments_paginated(supabase, "payments_log")
+    df_db = pd.DataFrame(all_db_payments)
     
     if df_db.empty:
         db_counts = pd.Series(dtype='int64')
@@ -117,7 +148,7 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
     df_source['payment_amount_str'] = df_source['payment_amount'].astype(str)
     source_counts = df_source.groupby(['loan_id', 'payment_date', 'payment_amount_str']).size()
 
-    # --- ADDED DEBUG LOGGING ---
+    # --- DEBUG LOGGING ---
     logger.info("\n--- DEBUG: CLEANED SOURCE DATA SAMPLES ---")
     logger.info(f"Source DataFrame Size: {len(df_source)}")
     if not df_source.empty:
