@@ -87,12 +87,10 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
         return False
 
     # --- 2. Clean and preprocess source data for comparison ---
-    # Apply cleaning and parsing logic from original code
     df_source['loan_id'] = df_source[SOURCE_LOAN_ID_COL].astype(str).str.lower().str.strip()
     df_source['payment_date'] = pd.to_datetime(df_source[SOURCE_DATE_COL], errors='coerce').dt.strftime('%Y-%m-%d')
     df_source['payment_amount'] = df_source[SOURCE_AMOUNT_COL].apply(safe_string_to_float).round(2)
 
-    # Filter out invalid rows before counting
     df_source = df_source.dropna(subset=['loan_id', 'payment_date', 'payment_amount'])
     df_source = df_source[df_source['payment_amount'] > 0]
     
@@ -104,19 +102,22 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
     res = supabase.from_("payments_log").select("loan_id, payment_date, payment_amount").execute()
     df_db = pd.DataFrame(res.data)
     
-    # --- FIX: Handle empty DataFrame from database query ---
     if df_db.empty:
-        db_counts = pd.Series(dtype='int64') # Create an empty Series for the counts
+        db_counts = pd.Series(dtype='int64')
     else:
         df_db['loan_id'] = df_db['loan_id'].astype(str).str.lower().str.strip()
+        df_db['payment_date'] = pd.to_datetime(df_db['payment_date'], errors='coerce').dt.strftime('%Y-%m-%d')
         df_db['payment_amount'] = df_db['payment_amount'].round(2)
         df_db = df_db.dropna(subset=['loan_id', 'payment_date', 'payment_amount'])
-        # --- The error-prone line moved here ---
-        db_counts = df_db.groupby(['loan_id', 'payment_date', 'payment_amount']).size()
+        
+        # --- FIX: Convert payment_amount to string to avoid floating point issues
+        df_db['payment_amount_str'] = df_db['payment_amount'].astype(str)
+        db_counts = df_db.groupby(['loan_id', 'payment_date', 'payment_amount_str']).size()
 
     # --- 4. Count payments by a unique transaction key for comparison ---
-    # Key for comparison is a tuple of (loan_id, payment_date, payment_amount)
-    source_counts = df_source.groupby(['loan_id', 'payment_date', 'payment_amount']).size()
+    # --- FIX: Convert payment_amount to string to avoid floating point issues
+    df_source['payment_amount_str'] = df_source['payment_amount'].astype(str)
+    source_counts = df_source.groupby(['loan_id', 'payment_date', 'payment_amount_str']).size()
 
     # --- 5. Determine which payments are new ---
     payments_to_insert = []
@@ -124,19 +125,17 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
     for key, source_count in source_counts.items():
         db_count = db_counts.get(key, 0)
         
-        # We need to insert the difference between the source and database counts
         num_to_insert = source_count - db_count
         
         if num_to_insert > 0:
-            loan_id, payment_date, payment_amount = key
+            loan_id, payment_date, payment_amount_str = key
             new_payment = {
                 "loan_id": loan_id,
                 "payment_date": payment_date,
-                "payment_amount": payment_amount,
+                "payment_amount": float(payment_amount_str), # Convert back to float for insertion
                 "processed": False,
                 "processed_at": None,
             }
-            # Append this new payment dictionary 'num_to_insert' times
             payments_to_insert.extend([new_payment] * num_to_insert)
 
     logger.info(f"Found {len(payments_to_insert)} new payments to insert.")
