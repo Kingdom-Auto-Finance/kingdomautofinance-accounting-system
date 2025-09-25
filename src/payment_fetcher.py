@@ -38,15 +38,15 @@ SOURCE_SHEET_TAB_NAME = "Payments"
 
 def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_all=False, fetch_recent_days=None):
     """
-    Fetches payment data from the source sheet, filters duplicates,
-    and inserts new payments into Supabase payments_log.
+    Fetches payment data from the source sheet, filters, compares counts with the database,
+    and inserts only the new payments into Supabase payments_log.
     Returns True on success, False on error.
     """
     # Determine logging mode
     if fetch_recent_days:
         run_mode_log = f"Recent {fetch_recent_days} days"
     elif fetch_all:
-        run_mode_log = "All (checking duplicates)"
+        run_mode_log = "All (checking counts for duplicates)"
     elif start_date_str or end_date_str:
         run_mode_log = f"Range {start_date_str or 'any'} - {end_date_str or 'any'}"
     else:
@@ -68,7 +68,6 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
     logger.info(
         f"Reading source payment data from Sheet ID: {source_sheet_id}, Tab: '{SOURCE_SHEET_TAB_NAME}'"
     )
-    # Use expected_headers to avoid duplicate header issues
     df_source = gutils.get_sheet_as_df(
         gs_client,
         source_sheet_id,
@@ -79,7 +78,6 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
         logger.warning(f"Source payment sheet ('{SOURCE_SHEET_TAB_NAME}') empty or unreadable.")
         return False
 
-    # Verify required source columns
     required_source_cols = [SOURCE_LOAN_ID_COL, SOURCE_DATE_COL, SOURCE_AMOUNT_COL]
     missing_cols = [col for col in required_source_cols if col not in df_source.columns]
     if missing_cols:
@@ -88,158 +86,67 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
         )
         return False
 
-    # --- 2. Load existing payments from Supabase for duplicate check ---
-    # Fetch all relevant columns from Supabase
-    res = supabase.from_("payments_log").select(
-        "loan_id, payment_date, payment_amount"
-    ).execute()
+    # --- 2. Clean and preprocess source data for comparison ---
+    # Apply cleaning and parsing logic from original code
+    df_source['loan_id'] = df_source[SOURCE_LOAN_ID_COL].astype(str).str.lower().str.strip()
+    df_source['payment_date'] = pd.to_datetime(df_source[SOURCE_DATE_COL], errors='coerce').dt.strftime('%Y-%m-%d')
+    df_source['payment_amount'] = df_source[SOURCE_AMOUNT_COL].apply(safe_string_to_float).round(2)
+
+    # Filter out invalid rows before counting
+    df_source = df_source.dropna(subset=['loan_id', 'payment_date', 'payment_amount'])
+    df_source = df_source[df_source['payment_amount'] > 0]
     
-    # Create a set of tuples for quick lookups.
-    # We round the amount to avoid floating-point comparison issues.
-    existing_payments = set()
-    if res.data:
-        for row in res.data:
-            # Ensure proper handling of potential None values and convert data types
-            loan_id = str(row.get('loan_id', '')).lower()
-            payment_date = row.get('payment_date')
-            payment_amount = row.get('payment_amount')
-            
-            # Check for valid data before adding to the set
-            if loan_id and payment_date and payment_amount is not None:
-                # Use a tuple for the key to be hashable
-                key = (loan_id, payment_date, round(payment_amount, 2))
-                existing_payments.add(key)
-    logger.info(f"Loaded {len(existing_payments)} existing payments from Supabase for duplicate check.")
-
-
-    # --- 3. Parse, Transform, Filter source data ---
-    new_payments = []
-    parse_errors = duplicate_count = out_of_range_count = missing_loanid_count = 0
-
-    # Determine date filter
-    filter_start = filter_end = None
-    if fetch_recent_days:
-        try:
-            filter_end = datetime.now().date()
-            filter_start = filter_end - timedelta(days=int(fetch_recent_days) - 1)
-            logger.info(f"Filtering FROM {filter_start} TO {filter_end}.")
-        except (ValueError, TypeError):
-            logger.error(
-                f"Invalid fetch_recent_days: {fetch_recent_days}. No date filter applied."
-            )
-            fetch_all = True
-    elif not fetch_all:
-        try:
-            if start_date_str:
-                filter_start = datetime.strptime(
-                    start_date_str, "%Y-%m-%d"
-                ).date()
-            if end_date_str:
-                filter_end = datetime.strptime(
-                    end_date_str, "%Y-%m-%d"
-                ).date()
-            logger.info(
-                f"Filtering FROM {filter_start or 'beginning'} TO {filter_end or 'end'}."
-            )
-        except ValueError:
-            logger.error(
-                f"Invalid date format: {start_date_str}/{end_date_str}. No date filter applied."
-            )
-            fetch_all = True
-
-    # Loop through source rows
-    for index, row in df_source.iterrows():
-        raw_id = row.get(SOURCE_LOAN_ID_COL)
-        raw_date = row.get(SOURCE_DATE_COL)
-        raw_amount = row.get(SOURCE_AMOUNT_COL)
-
-        # Validate Loan ID
-        loan_id = str(raw_id).strip() if pd.notna(raw_id) else ""
-        if not loan_id or loan_id.lower() == 'nan':
-            missing_loanid_count += 1
-            continue
-        loan_id = loan_id.lower()
-
-        # Validate amount
-        amount = safe_string_to_float(raw_amount, f"Row {index}")
-        if pd.isna(amount) or amount <= 0:
-            parse_errors += 1
-            continue
-
-        # Validate date
-        if pd.isna(raw_date) or str(raw_date).strip() == "":
-            parse_errors += 1
-            continue
-        try:
-            payment_date_obj = pd.to_datetime(
-                raw_date, format="%m/%d/%Y", errors="raise"
-            ).date()
-        except (ValueError, TypeError):
-            try:
-                payment_date_obj = pd.to_datetime(raw_date, errors="raise").date()
-                logger.warning(
-                    f"Row {index}: Non-standard date '{raw_date}', parsed generally."
-                )
-            except (ValueError, TypeError):
-                parse_errors += 1
-                continue
-
-        # Apply date filter
-        if not fetch_all:
-            if filter_start and payment_date_obj < filter_start:
-                out_of_range_count += 1
-                continue
-            if filter_end and payment_date_obj > filter_end:
-                out_of_range_count += 1
-                continue
-
-        # Create a key for the current row using the same logic as the existing payments
-        # The date must be a string in YYYY-MM-DD format for consistency with the Supabase date type
-        payment_date_str = payment_date_obj.strftime("%Y-%m-%d")
-        
-        # We also round the amount to the same precision to ensure accurate comparison
-        rounded_amount = round(amount, 2)
-        
-        # The key is now a tuple of the actual values, not a formatted string
-        current_key = (loan_id, payment_date_str, rounded_amount)
-        
-        if current_key in existing_payments:
-            duplicate_count += 1
-            continue
-
-        # Add the new payment to the list to be inserted
-        new_payments.append({
-            "loan_id":        loan_id,
-            "payment_date":   payment_date_str,
-            "payment_amount": rounded_amount,
-            "processed":      False,
-            "processed_at":   None,
-        })
-        
-        # Add the new payment to the set to prevent duplicates within the same run
-        existing_payments.add(current_key)
-
-
-    # Log summary
-    logger.info(f"Found {len(new_payments)} new payments.")
-    if parse_errors:
-        logger.warning(f"Skipped {parse_errors} rows due to parse errors.")
-    if missing_loanid_count:
-        logger.warning(f"Skipped {missing_loanid_count} rows missing LoanID.")
-    if duplicate_count:
-        logger.info(f"Skipped {duplicate_count} duplicates.")
-    if out_of_range_count:
-        logger.info(f"Skipped {out_of_range_count} out-of-range.")
-
-    # --- 4. Insert new payments into Supabase ---
-    if not new_payments:
-        logger.info("No new valid payments to insert.")
+    if df_source.empty:
+        logger.info("No valid payment rows found in the source sheet after cleaning.")
         return True
 
-    sup_res = supabase.from_("payments_log").insert(new_payments).execute()
+    # --- 3. Load and preprocess existing payments from Supabase ---
+    res = supabase.from_("payments_log").select("loan_id, payment_date, payment_amount").execute()
+    df_db = pd.DataFrame(res.data)
+    
+    if not df_db.empty:
+        df_db['loan_id'] = df_db['loan_id'].astype(str).str.lower().str.strip()
+        df_db['payment_amount'] = df_db['payment_amount'].round(2)
+        df_db = df_db.dropna(subset=['loan_id', 'payment_date', 'payment_amount'])
+
+    # --- 4. Count payments by a unique transaction key for comparison ---
+    # Key for comparison is a tuple of (loan_id, payment_date, payment_amount)
+    source_counts = df_source.groupby(['loan_id', 'payment_date', 'payment_amount']).size()
+    db_counts = df_db.groupby(['loan_id', 'payment_date', 'payment_amount']).size()
+
+    # --- 5. Determine which payments are new ---
+    payments_to_insert = []
+    
+    for key, source_count in source_counts.items():
+        db_count = db_counts.get(key, 0)
+        
+        # We need to insert the difference between the source and database counts
+        num_to_insert = source_count - db_count
+        
+        if num_to_insert > 0:
+            loan_id, payment_date, payment_amount = key
+            new_payment = {
+                "loan_id": loan_id,
+                "payment_date": payment_date,
+                "payment_amount": payment_amount,
+                "processed": False,
+                "processed_at": None,
+            }
+            # Append this new payment dictionary 'num_to_insert' times
+            payments_to_insert.extend([new_payment] * num_to_insert)
+
+    logger.info(f"Found {len(payments_to_insert)} new payments to insert.")
+    
+    if not payments_to_insert:
+        logger.info("No new payments to insert.")
+        return True
+
+    # --- 6. Insert new payments into Supabase ---
+    sup_res = supabase.from_("payments_log").insert(payments_to_insert).execute()
+    
     if hasattr(sup_res, "error") and sup_res.error:
         logger.error(f"Failed inserting payments: {sup_res.error}")
         return False
 
-    logger.info(f"Inserted {len(new_payments)} payments into Supabase.")
+    logger.info(f"Successfully inserted {len(payments_to_insert)} payments into Supabase.")
     return True
