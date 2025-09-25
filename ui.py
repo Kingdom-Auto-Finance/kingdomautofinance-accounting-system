@@ -119,15 +119,15 @@ with col2:
     if st.button("📝", key="log_fetch"):
         st.session_state["show_fetch_log"] = not st.session_state["show_fetch_log"]
 
-if st.button("Fetch Recent Payments (7 days)", key="btn_fetch_recent", disabled=st.session_state["busy"]):
-    st.session_state["busy"] = True
-    try:
-        with st.spinner("Fetching recent payments…"):
-            out, err = run_cmd("python src/main.py fetch_payments --recent 7")
-        st.session_state["fetch_log"] = out + ("\n" + err if err else "")
-        st.success("Fetched recent payments.")
-    finally:
-        st.session_state["busy"] = False
+# if st.button("Fetch Recent Payments (7 days)", key="btn_fetch_recent", disabled=st.session_state["busy"]):
+#    st.session_state["busy"] = True
+#    try:
+#        with st.spinner("Fetching recent payments…"):
+#            out, err = run_cmd("python src/main.py fetch_payments --recent 7")
+#        st.session_state["fetch_log"] = out + ("\n" + err if err else "")
+#        st.success("Fetched recent payments.")
+#    finally:
+#        st.session_state["busy"] = False
 
 if st.button("Fetch Payments (All Time)", key="btn_fetch_all", disabled=st.session_state["busy"]):
     st.session_state["busy"] = True
