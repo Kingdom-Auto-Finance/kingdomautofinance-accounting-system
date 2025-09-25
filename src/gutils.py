@@ -2,24 +2,25 @@
 import os
 import gspread
 import pandas as pd
-from google.oauth2.service_account import Credentials 
-from google.cloud import secretmanager 
-from googleapiclient.discovery import build 
-from googleapiclient.errors import HttpError 
-import json 
-import logging 
-import time 
-from decimal import Decimal, InvalidOperation 
-from datetime import datetime, date 
+from google.oauth2.service_account import Credentials
+from google.cloud import secretmanager
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+import json
+import logging
+import time
+from decimal import Decimal, InvalidOperation
+from datetime import datetime, date
+from gspread.exceptions import APIError, SpreadsheetNotFound, WorksheetNotFound
 
-import config 
+import config
 
 logger = logging.getLogger(__name__)
-drive_service_client = None 
-gspread_authorized_client = None 
+drive_service_client = None
+gspread_authorized_client = None
 
 # --- Constants ---
-# Google Sheets API has a rate limit. Batching helps. 
+# Google Sheets API has a rate limit. Batching helps.
 # The maximum number of cells in a single request is 5 million. A batch size of 500
 # is a safe and effective starting point to stay well below per-minute limits.
 BATCH_SIZE = 500
@@ -27,12 +28,12 @@ BATCH_SIZE = 500
 # --- Helper function to clean/convert currency strings to float ---
 def safe_string_to_float(value_str, context=""):
     """Cleans string (removes $, commas) and converts to float, returns pd.NA on error."""
-    if pd.isna(value_str) or str(value_str).strip() == "": return pd.NA 
+    if pd.isna(value_str) or str(value_str).strip() == "": return pd.NA
     try:
         cleaned_str = str(value_str).replace('$', '').replace(',', '').strip()
         if cleaned_str.startswith('(') and cleaned_str.endswith(')'): cleaned_str = '-' + cleaned_str[1:-1]
         return float(cleaned_str)
-    except (ValueError, TypeError): logger.warning(f"Could not convert '{value_str}' to float for {context}. Returning pd.NA."); return pd.NA 
+    except (ValueError, TypeError): logger.warning(f"Could not convert '{value_str}' to float for {context}. Returning pd.NA."); return pd.NA
 
 # --- Helper function to clean/convert string to Decimal ---
 def safe_string_to_decimal(value_str, context=""):
@@ -49,18 +50,18 @@ def get_loan_ids_from_drive_folder(folder_id):
     """Lists Google Sheet files in Drive folder, returns their names (assumed LoanIDs)."""
     loan_ids = []; drive_service = None; page_token = None
     try:
-        drive_service = get_drive_service(); 
+        drive_service = get_drive_service();
         if not drive_service: logger.error("Cannot get Drive service to list loan IDs."); return []
         logger.info(f"Listing Google Sheets in Drive Folder ID: {folder_id}")
         request = drive_service.files().list(q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false", pageSize=1000, fields="nextPageToken, files(id, name)", pageToken=page_token)
         while request is not None:
             results = request.execute(); items = results.get('files', [])
-            if not items and not loan_ids: 
+            if not items and not loan_ids:
                  if page_token is None: logger.warning(f"No sheets found in folder: {folder_id}"); return []
-                 else: break 
+                 else: break
             for item in items:
                 filename = item.get('name')
-                if filename: loan_ids.append(filename) 
+                if filename: loan_ids.append(filename)
                 else: logger.warning(f"Found file with ID {item.get('id')} but no name.")
             request = drive_service.files().list_next(previous_request=request, previous_response=results)
         logger.info(f"Found {len(loan_ids)} potential LoanIDs in Drive folder.")
@@ -75,15 +76,15 @@ def get_drive_service():
         logger.debug("Initializing Google Drive service client...")
         try:
             credentials = get_service_account_credentials_from_env()
-            drive_service_client = build('drive', 'v3', credentials=credentials, cache_discovery=False) 
+            drive_service_client = build('drive', 'v3', credentials=credentials, cache_discovery=False)
             logger.info("Google Drive API service client created.")
         except Exception as e:
             logger.error(f"Failed to create Drive API service client: {e}", exc_info=True)
-            drive_service_client = None 
+            drive_service_client = None
             raise ConnectionError(f"Could not create Drive service client: {e}")
     return drive_service_client
 
-# --- get_service_account_credentials_from_secret_manager --- 
+# --- get_service_account_credentials_from_secret_manager ---
 def get_service_account_credentials_from_env():
     try:
         json_data = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -102,7 +103,7 @@ def get_service_account_credentials_from_env():
         logger.error(f"Failed to load credentials from env: {e}", exc_info=True)
         raise
 
-# --- get_gspread_client --- 
+# --- get_gspread_client ---
 def get_gspread_client():
     global gspread_authorized_client
     if gspread_authorized_client is None:
@@ -111,20 +112,20 @@ def get_gspread_client():
             credentials = get_service_account_credentials_from_env()
             gspread_authorized_client = gspread.authorize(credentials)
             logger.info("gspread client authorized successfully.")
-        except Exception as e: 
-            logger.error(f"Failed to get authorized gspread client: {e}", exc_info=True); 
+        except Exception as e:
+            logger.error(f"Failed to get authorized gspread client: {e}", exc_info=True);
             gspread_authorized_client = None # Reset cache on error
             raise ConnectionError(f"Could not authorize gspread client...")
     return gspread_authorized_client
 
-# --- find_sheet_id_by_loan_id_in_folder --- 
+# --- find_sheet_id_by_loan_id_in_folder ---
 def find_sheet_id_by_loan_id_in_folder(loan_id):
     target_filename = str(loan_id).strip()
     parent_folder_id = config.AMORTIZATION_SCHEDULES_FOLDER_ID
     if not parent_folder_id: logger.error("AMORTIZATION_SCHEDULES_FOLDER_ID not set."); return None
     logger.debug(f"Searching for Sheet '{target_filename}' in Folder ID '{parent_folder_id}'")
     try:
-        service = get_drive_service() 
+        service = get_drive_service()
         if not service: logger.error("Drive service not available."); return None
         query = f"'{parent_folder_id}' in parents and name = '{target_filename}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
         results = service.files().list(q=query, pageSize=5, fields="files(id, name)").execute()
@@ -135,29 +136,35 @@ def find_sheet_id_by_loan_id_in_folder(loan_id):
     except HttpError as error: logger.error(f"Drive API error searching for '{target_filename}': {error}", exc_info=True); return None
     except Exception as e: logger.error(f"Unexpected error during Drive search: {e}", exc_info=True); return None
 
-# --- get_sheet_as_df (Using get_all_records) --- 
+# --- get_sheet_as_df (Using get_all_records) ---
 def get_sheet_as_df(gspread_client, sheet_id, sheet_name=None, max_retries=5, initial_delay=1, **kwargs):
     if gspread_client is None: logger.error("gspread_client is None..."); return pd.DataFrame()
     retries = 0; current_delay = initial_delay
     while retries < max_retries:
         try:
-            spreadsheet = gspread_client.open_by_key(sheet_id); worksheet = spreadsheet.worksheet(sheet_name) if sheet_name else spreadsheet.sheet1
+            spreadsheet = gspread_client.open_by_key(sheet_id)
+            worksheet = spreadsheet.worksheet(sheet_name) if sheet_name else spreadsheet.sheet1
             logger.debug(f"Attempting read using get_all_records() for {sheet_id}/{sheet_name}")
-            records = worksheet.get_all_records(**kwargs) 
+            records = worksheet.get_all_records(**kwargs)
             if not records:
-                headers = worksheet.row_values(1) 
+                headers = worksheet.row_values(1)
                 if not headers: logger.warning(f"Sheet... '{sheet_name}' appears completely empty."); return pd.DataFrame()
-                else: logger.warning(f"Sheet... '{sheet_name}' has headers but no data rows returned."); return pd.DataFrame(columns=[str(h).strip() for h in headers]) 
-            df = pd.DataFrame.from_records(records) 
+                else: logger.warning(f"Sheet... '{sheet_name}' has headers but no data rows returned."); return pd.DataFrame(columns=[str(h).strip() for h in headers])
+            df = pd.DataFrame.from_records(records)
             df.columns = [str(h).strip() for h in df.columns]
             logger.debug(f"Successfully read sheet using get_all_records()... Columns: {df.columns.tolist()}")
             return df
-        except gspread.exceptions.APIError as e:
-            if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 429:
-                retries += 1;
-                if retries >= max_retries: logger.error(f"Quota exceeded reading... Max retries. Error: {e}"); raise
-                wait_time = current_delay * (2 ** (retries - 1)); logger.warning(f"Quota exceeded reading... Retrying in {wait_time:.2f}s..."); time.sleep(wait_time)
-            else: logger.error(f"Non-quota APIError reading sheet...: {e}", exc_info=True); raise
+        except APIError as e:
+            # --- FIX: Expanded retry logic to handle 5xx errors ---
+            status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status_code in (429, 500, 502, 503, 504):
+                retries += 1
+                if retries >= max_retries:
+                    logger.error(f"Transient API error ({status_code}) reading... Max retries. Error: {e}"); raise
+                wait_time = current_delay * (2 ** (retries - 1))
+                logger.warning(f"Transient API error ({status_code}) reading... Retrying in {wait_time:.2f}s..."); time.sleep(wait_time)
+            else:
+                logger.error(f"Non-transient APIError reading sheet...: {e}", exc_info=True); raise
         except gspread.exceptions.WorksheetNotFound: logger.error(f"Worksheet '{sheet_name}' not found..."); return pd.DataFrame()
         except Exception as e: logger.error(f"General error reading sheet...: {e}", exc_info=True); return pd.DataFrame()
     logger.error(f"Failed read sheet... after {max_retries} retries."); return pd.DataFrame()
@@ -179,15 +186,15 @@ def update_cells_in_batches(worksheet, data_list_of_lists, max_retries=3, initia
     while batch_start < total_rows:
         batch_end = min(batch_start + BATCH_SIZE, total_rows)
         current_batch = data_list_of_lists[batch_start:batch_end]
-        
+
         # Calculate the range to update, including the header row
         start_row = batch_start + 1 # +1 for 1-based indexing
         end_row = batch_end
         range_to_update = f"A{start_row}:{worksheet.col_count}"
-        
+
         retries = 0
         current_delay = initial_delay
-        
+
         while retries < max_retries:
             try:
                 # Update the cells for the current batch
@@ -195,21 +202,23 @@ def update_cells_in_batches(worksheet, data_list_of_lists, max_retries=3, initia
                 logger.info(f"Successfully updated batch {batch_start+1}-{batch_end} of {total_rows}.")
                 break # Break from retry loop on success
             except gspread.exceptions.APIError as e:
-                if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 429:
+                # --- NEW: Expanded retry logic for transient write errors ---
+                status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+                if status_code in (429, 500, 502, 503, 504):
                     retries += 1
                     if retries >= max_retries:
-                        logger.error(f"Write quota exceeded updating batch. Max retries reached. Error: {e}")
+                        logger.error(f"Transient write error ({status_code}) updating batch. Max retries reached. Error: {e}")
                         success = False; break
                     wait_time = current_delay * (2 ** (retries - 1))
-                    logger.warning(f"Write quota exceeded updating batch. Retrying in {wait_time:.2f}s...")
+                    logger.warning(f"Transient write error ({status_code}) updating batch. Retrying in {wait_time:.2f}s...")
                     time.sleep(wait_time)
                 else:
-                    logger.error(f"Non-quota APIError updating batch: {e}", exc_info=True)
+                    logger.error(f"Non-transient APIError updating batch: {e}", exc_info=True)
                     success = False; break
             except Exception as e:
                 logger.error(f"General error updating batch: {e}", exc_info=True)
                 success = False; break
-        
+
         if not success:
             logger.error(f"Failed to update entire dataset after error on batch {batch_start+1}-{batch_end}.")
             return False
@@ -222,11 +231,11 @@ def update_cells_in_batches(worksheet, data_list_of_lists, max_retries=3, initia
     logger.info(f"All batches successfully updated.")
     return True
 
-# --- update_worksheet_from_df (Revised to use batching) --- 
+# --- update_worksheet_from_df (Revised to use batching) ---
 def update_worksheet_from_df(gspread_client, sheet_id, sheet_name, df_to_write, max_retries=3, initial_delay=1.5):
     if gspread_client is None: logger.error(f"gspread_client is None..."); return False
     if df_to_write is None: logger.error(f"DataFrame to write is None..."); return False
-    
+
     # 1. Prepare data (same as before)
     if df_to_write.empty:
         if not df_to_write.columns.empty: list_of_lists_for_gspread = [df_to_write.columns.tolist()]
@@ -237,19 +246,19 @@ def update_worksheet_from_df(gspread_client, sheet_id, sheet_name, df_to_write, 
         for row_tuple in df_to_write.itertuples(index=False, name=None):
             processed_row = []
             for value in row_tuple:
-                if pd.isna(value): processed_row.append(None) 
+                if pd.isna(value): processed_row.append(None)
                 elif isinstance(value, (datetime, date, pd.Timestamp)):
-                    try: 
+                    try:
                         if isinstance(value, date) and not isinstance(value, datetime): processed_row.append(value.strftime('%Y-%m-%d'))
                         elif isinstance(value, pd.Timestamp) and value.normalize() == value: processed_row.append(value.strftime('%Y-%m-%d'))
-                        else: processed_row.append(value.isoformat()) 
-                    except AttributeError: processed_row.append(None) 
+                        else: processed_row.append(value.isoformat())
+                    except AttributeError: processed_row.append(None)
                 elif isinstance(value, (int, float, bool)): processed_row.append(value)
-                elif isinstance(value, Decimal): processed_row.append(str(value)) 
+                elif isinstance(value, Decimal): processed_row.append(str(value))
                 else: processed_row.append(str(value))
             data_rows.append(processed_row)
         list_of_lists_for_gspread = [headers] + data_rows
-    
+
     # 2. Open the worksheet and clear it
     worksheet = None
     try:
@@ -266,54 +275,60 @@ def update_worksheet_from_df(gspread_client, sheet_id, sheet_name, df_to_write, 
         logger.info(f"Successfully cleared worksheet '{sheet_name}'.")
     except Exception as e:
         logger.error(f"Failed to clear worksheet '{sheet_name}': {e}", exc_info=True); return False
-        
+
     # 3. Use the new batching function to update the data
     if not list_of_lists_for_gspread:
         logger.info("No data to write after clearing worksheet.")
         return True # Successfully cleared, but nothing to write.
 
     success = update_cells_in_batches(worksheet, list_of_lists_for_gspread, max_retries, initial_delay)
-    
+
     if success:
         logger.info(f"Successfully updated worksheet '{sheet_name}' from DataFrame.")
     else:
         logger.error(f"Failed to update worksheet '{sheet_name}' from DataFrame due to batching error.")
-        
+
     return success
 
 
 # --- NEW FUNCTION: Append Rows to Sheet (Existing function remains unchanged as it's already a single API call) ---
-def append_rows_to_sheet(gspread_client, sheet_id, sheet_name, data_list_of_lists, 
+def append_rows_to_sheet(gspread_client, sheet_id, sheet_name, data_list_of_lists,
                          input_option='USER_ENTERED', max_retries=3, initial_delay=1.5):
     """
     Appends rows (list of lists) to the first empty row of a worksheet.
     Includes retry logic for quota errors.
     """
     if gspread_client is None: logger.error(f"gspread_client is None in append_rows..."); return False
-    if not data_list_of_lists: logger.info("No data provided to append."); return True 
+    if not data_list_of_lists: logger.info("No data provided to append."); return True
 
     logger.info(f"Attempting to append {len(data_list_of_lists)} rows to Sheet ID: {sheet_id}, Worksheet: {sheet_name}")
-    
+
     retries = 0
     current_delay = initial_delay
     while retries < max_retries:
         try:
             spreadsheet = gspread_client.open_by_key(sheet_id)
             worksheet = spreadsheet.worksheet(sheet_name)
-            
+
             # Append rows to the first empty row after the last row containing data
             worksheet.append_rows(data_list_of_lists, value_input_option=input_option)
-            
+
             logger.info(f"Successfully appended {len(data_list_of_lists)} rows.")
             return True # Success
 
         except gspread.exceptions.APIError as e:
-            if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 429:
+            # --- NEW: Expanded retry logic for transient write errors ---
+            status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status_code in (429, 500, 502, 503, 504):
                 retries += 1
-                if retries >= max_retries: logger.error(f"Write quota exceeded appending... Max retries. Error: {e}"); return False
-                wait_time = current_delay * (2 ** (retries - 1)); logger.warning(f"Write quota exceeded appending... Retrying in {wait_time:.2f}s..."); time.sleep(wait_time)
-            else: logger.error(f"Non-quota APIError appending...: {e}", exc_info=True); return False
+                if retries >= max_retries:
+                    logger.error(f"Transient write error ({status_code}) appending... Max retries. Error: {e}"); return False
+                wait_time = current_delay * (2 ** (retries - 1))
+                logger.warning(f"Transient write error ({status_code}) appending... Retrying in {wait_time:.2f}s...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Non-transient APIError appending...: {e}", exc_info=True); return False
         except gspread.exceptions.WorksheetNotFound: logger.error(f"Worksheet '{sheet_name}' not found for appending..."); return False
         except Exception as e: logger.error(f"General error appending rows...: {e}", exc_info=True); return False
-        
+
     logger.error(f"Failed to append rows after {max_retries} retries."); return False
