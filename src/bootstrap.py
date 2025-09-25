@@ -5,7 +5,7 @@ from supabase import create_client
 import pandas as pd
 import os
 import time
-from postgrest.exceptions import APIError  # new
+from postgrest.exceptions import APIError
 import gutils
 
 
@@ -167,12 +167,15 @@ def bootstrap_tables():
         if row_count > 0:
             print(f"Table {table_name} already has {row_count} rows. Skipping import.")
             record_new_loan(supabase, loan_id)
+            # Add a delay here as well, since this loop continues without a Google Sheets read.
+            time.sleep(0.5)
             continue
 
         # 3) Load amortization schedule from Google Sheets
         df_sched = get_google_sheet_df(loan_id)
         if df_sched is None or df_sched.empty:
             print(f"⚠️ Schedule CSV for '{loan_id}' is empty or unreadable; skipping.")
+            time.sleep(0.5)  # Delay even if a sheet is skipped
             continue
 
         # 4) Prepare rows for insertion with sanitized data
@@ -199,6 +202,10 @@ def bootstrap_tables():
             else:
                 print(f"Imported {len(rows_to_insert)} rows into {table_name}.")
                 record_new_loan(supabase, loan_id)
+
+        # --- FIX: ADDED DELAY TO AVOID GOOGLE SHEETS API RATE LIMITS ---
+        print(f"Pausing for 1 second to respect Google Sheets API rate limits...")
+        time.sleep(1)
 
 
 if __name__ == "__main__":
