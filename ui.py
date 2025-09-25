@@ -75,7 +75,7 @@ logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Au
 st.markdown(
     f"<div style='text-align:center; margin-top:-10px; margin-bottom:20px;'><img src='{logo_url}' width='250'></div>"
     "<h1 style='text-align:center'>Kingdom Accounting System</h1>"
-    "<p style='text-align:center;opacity:.75'>v1.35 • Last System Update: 09/25/2025</p>",
+    "<p style='text-align:center;opacity:.75'>v1.36 • Last System Update: 09/25/2025</p>",
     unsafe_allow_html=True
 )
 
@@ -87,7 +87,7 @@ if "busy" not in st.session_state:
     st.session_state["busy"] = False
 
 # Log toggles + content buckets
-for sec in ["import", "fetch", "process", "daily", "report"]:
+for sec in ["import", "fetch", "process", "daily", "report", "integrity"]:
     st.session_state.setdefault(f"show_{sec}_log", False)
     st.session_state.setdefault(f"{sec}_log", "")
 
@@ -318,5 +318,43 @@ if st.session_state["authenticated"]:
 
         if st.session_state["show_process_log"]:
             st.markdown(f"<div class='log-box'>{st.session_state['process_log']}</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+        
+        # =========================
+        # Amortization Schedule Integrity Check
+        # =========================
+        col1, col2 = st.columns([10, 1])
+        with col1:
+            st.header("Amortization Schedule Integrity")
+        with col2:
+            if st.button("📝", key="log_integrity"):
+                st.session_state["show_integrity_log"] = not st.session_state["show_integrity_log"]
+
+        if st.button("Check Data Integrity", key="btn_check_integrity", disabled=st.session_state["busy"]):
+            st.session_state["busy"] = True
+            try:
+                with st.spinner("Checking data integrity..."):
+                    out, err = run_cmd("python src/main.py check_integrity")
+                st.session_state["integrity_log"] = out + ("\n" + err if err else "")
+                csv_block = extract_csv(out)
+                if csv_block:
+                    df = pd.read_csv(io.StringIO(csv_block))
+                    st.dataframe(df)
+                    st.download_button(
+                        "Download Report", df.to_csv(index=False),
+                        file_name="integrity_report.csv", mime="text/csv", key="dl_integrity"
+                    )
+                    if not df[df['status'] == 'Mismatch'].empty:
+                        st.warning("⚠️ Discrepancies found! Please review the report.")
+                    else:
+                        st.success("✅ All schedule tables are in sync with Google Sheets.")
+                else:
+                    st.error("No data returned or parsing error.")
+            finally:
+                st.session_state["busy"] = False
+
+        if st.session_state["show_integrity_log"]:
+            st.markdown(f"<div class='log-box'>{st.session_state['integrity_log']}</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)

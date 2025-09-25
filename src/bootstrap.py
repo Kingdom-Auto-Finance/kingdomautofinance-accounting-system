@@ -195,8 +195,9 @@ def bootstrap_tables():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    # Configure Supabase
-    config.SUPABASE_URL = os.getenv("SUPABASE_URL")
-    config.SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    # This section was causing the issue. The configuration is already handled
+    # by your config.py file, so these lines were overwriting valid values with None.
+    # config.SUPABASE_URL = os.getenv("SUPABASE_URL")
+    # config.SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
     bootstrap_tables()

@@ -3,6 +3,13 @@ import logging
 import os
 import sys
 
+# --- ADDED IMPORTS ---
+import pandas as pd
+from supabase import create_client, Client
+import gutils
+# --- END ADDED IMPORTS ---
+
+
 # Suppress verbose logging from underlying clients
 logging.getLogger("supabase").setLevel(logging.WARNING)
 logging.getLogger("postgrest").setLevel(logging.WARNING)
@@ -113,6 +120,62 @@ def run_report(args):
         module_logger.error(f"Unknown report mode '{mode}'")
         sys.exit(1)
 
+# --- ADDED: NEW COMMAND FUNCTIONALITY ---
+def run_integrity_check(args):
+    """Checks for row count discrepancies between Google Sheets and Supabase tables."""
+    module_logger.info("Starting integrity check for amortization schedules...")
+    
+    supabase_url = config.SUPABASE_URL
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("supabase_service_role_key")
+    supabase: Client = create_client(supabase_url, supabase_key)
+    
+    gs_client = gutils.get_gspread_client()
+
+    all_loan_ids = gutils.get_loan_ids_from_drive_folder(config.AMORTIZATION_SCHEDULES_FOLDER_ID)
+    report_data = []
+
+    for loan_id in all_loan_ids:
+        table_name = f"schedule_{loan_id}"
+        
+        # Get count from Supabase
+        db_count = "N/A"
+        try:
+            res = supabase.from_(table_name).select('paymentnumber', count='exact').execute()
+            db_count = res.count
+        except Exception as e:
+            module_logger.error(f"Error fetching DB count for {loan_id} ({table_name}): {e}")
+            
+        # Get count from Google Sheets
+        sheet_count = "N/A"
+        try:
+            sheet_id = gutils.find_sheet_id_by_loan_id_in_folder(loan_id)
+            if sheet_id:
+                sheet = gs_client.open_by_key(sheet_id)
+                worksheet = sheet.worksheet("Schedule")
+                # Get the number of rows with values
+                sheet_count = len(worksheet.get_all_values()) - 1 # Subtract 1 for the header
+        except Exception as e:
+            module_logger.error(f"Error fetching Sheet count for {loan_id}: {e}")
+
+        status = "N/A"
+        if isinstance(db_count, int) and isinstance(sheet_count, int):
+            status = "Match" if db_count == sheet_count else "Mismatch"
+        
+        report_data.append({
+            "loan_id": loan_id,
+            "supabase_table": table_name,
+            "sheet_rows": sheet_count,
+            "db_rows": db_count,
+            "status": status,
+        })
+    
+    df = pd.DataFrame(report_data)
+    
+    # This prints the CSV to stdout for the UI to capture
+    print(df.to_csv(index=False))
+    module_logger.info("Integrity check complete.")
+# --- END ADDED CODE ---
+
 
 def cli_main():
     module_logger.info("Kingdom Auto Finance system starting via CLI.")
@@ -192,6 +255,15 @@ def cli_main():
         help="Fetch payments from the last N days."
     )
     p_fetch.set_defaults(func=run_fetch)
+
+    # --- ADDED: check_integrity command ---
+    p_integrity = subparsers.add_parser(
+        "check_integrity",
+        help="Compares amortization schedule row counts between Google Sheets and Supabase.",
+    )
+    p_integrity.set_defaults(func=run_integrity_check)
+    # --- END ADDED CODE ---
+
 
     # --- Parse and dispatch ---
     try:
