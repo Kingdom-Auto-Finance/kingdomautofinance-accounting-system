@@ -1,5 +1,4 @@
-# payment_processor.py  (minimal fix: atomic claim, no advisory locks)
-
+# payment_processor.py
 import os
 import logging
 from datetime import datetime, timedelta
@@ -59,29 +58,41 @@ def _client():
 def process_payments():
     """
     Processes unprocessed payments from payments_log, oldest first.
-
-    Best Practice/Professional allocation (PRESERVED):
-      - Allocate each payment to up to MAX_FORWARD_INSTALLMENTS rows (cadence-aware).
-      - Each covered row receives its share of the payment (actualpaymentamount).
-      - Interest/principal are calculated for actual payment date.
-      - If payment exceeds cap, excess is principal prepayment on the last covered row.
-
-    NEW guardrails (minimal additions only):
-      - Atomic row claim (UPDATE ... WHERE processed=False) so two runs can’t take the same payment.
-      - Reconciliation: ensure total applied equals payment amount (±$0.01) before we leave it processed.
-      - If anything goes wrong after the claim, we revert processed=False in a finally block.
     """
     sb = _client()
 
-    # Step 1: Fetch all unprocessed payments, ordered by payment_date ascending (PRESERVED)
-    resp = (
-        sb.from_("payments_log")
-          .select("id,loan_id,payment_date,payment_amount")
-          .eq("processed", False)
-          .order("payment_date")
-          .execute()
-    )
-    payments = resp.data or []
+    # --- CRITICAL FIX: PAGINATED FETCH ---
+    # Fetch all unprocessed payments in a loop to bypass the 1,000-row limit.
+    all_unprocessed_payments = []
+    page_size = 1000  # The Supabase default limit
+    offset = 0
+
+    logger.info("Fetching all unprocessed payments in batches...")
+    while True:
+        try:
+            resp = (
+                sb.from_("payments_log")
+                .select("id,loan_id,payment_date,payment_amount")
+                .eq("processed", False)
+                .order("payment_date")
+                .limit(page_size)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+            payments_batch = resp.data or []
+            if not payments_batch:
+                # No more data to fetch, so break the loop
+                break
+
+            all_unprocessed_payments.extend(payments_batch)
+            offset += page_size
+            logger.info(f"Fetched a batch of {len(payments_batch)} payments. Total fetched so far: {len(all_unprocessed_payments)}.")
+
+        except Exception as e:
+            logger.error(f"Error fetching payments from Supabase: {e}")
+            return False
+
+    payments = all_unprocessed_payments
     if not payments:
         logger.info("No payments to process.")
         return True
@@ -264,7 +275,7 @@ def process_payments():
 
                     # Bookkeeping so the payment finalizes cleanly (no further allocation)
                     allocation_done = True
-                    payment_rows = [last_rownum]
+                    payment_rows.append(last_rownum)
                     applied_total += payment_amt
                     remaining_amt = Decimal('0.00')
             # --- END NEW Curtailment rule ---

@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 drive_service_client = None 
 gspread_authorized_client = None 
 
+# --- Constants ---
+# Google Sheets API has a rate limit. Batching helps. 
+# The maximum number of cells in a single request is 5 million. A batch size of 500
+# is a safe and effective starting point to stay well below per-minute limits.
+BATCH_SIZE = 500
+
 # --- Helper function to clean/convert currency strings to float ---
 def safe_string_to_float(value_str, context=""):
     """Cleans string (removes $, commas) and converts to float, returns pd.NA on error."""
@@ -157,11 +163,71 @@ def get_sheet_as_df(gspread_client, sheet_id, sheet_name=None, max_retries=5, in
     logger.error(f"Failed read sheet... after {max_retries} retries."); return pd.DataFrame()
 
 
-# --- update_worksheet_from_df (Includes JSON serialization fix and retries) --- 
+# --- NEW FUNCTION: Update cells in batches ---
+def update_cells_in_batches(worksheet, data_list_of_lists, max_retries=3, initial_delay=1.5):
+    """
+    Updates a worksheet with data in batches to avoid hitting API limits.
+    Assumes the worksheet has already been cleared.
+    """
+    total_rows = len(data_list_of_lists)
+    if not total_rows:
+        logger.info("No data to update in batches. Returning.")
+        return True
+
+    batch_start = 0
+    success = True
+    while batch_start < total_rows:
+        batch_end = min(batch_start + BATCH_SIZE, total_rows)
+        current_batch = data_list_of_lists[batch_start:batch_end]
+        
+        # Calculate the range to update, including the header row
+        start_row = batch_start + 1 # +1 for 1-based indexing
+        end_row = batch_end
+        range_to_update = f"A{start_row}:{worksheet.col_count}"
+        
+        retries = 0
+        current_delay = initial_delay
+        
+        while retries < max_retries:
+            try:
+                # Update the cells for the current batch
+                worksheet.update(range_to_update, current_batch, value_input_option='USER_ENTERED')
+                logger.info(f"Successfully updated batch {batch_start+1}-{batch_end} of {total_rows}.")
+                break # Break from retry loop on success
+            except gspread.exceptions.APIError as e:
+                if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 429:
+                    retries += 1
+                    if retries >= max_retries:
+                        logger.error(f"Write quota exceeded updating batch. Max retries reached. Error: {e}")
+                        success = False; break
+                    wait_time = current_delay * (2 ** (retries - 1))
+                    logger.warning(f"Write quota exceeded updating batch. Retrying in {wait_time:.2f}s...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Non-quota APIError updating batch: {e}", exc_info=True)
+                    success = False; break
+            except Exception as e:
+                logger.error(f"General error updating batch: {e}", exc_info=True)
+                success = False; break
+        
+        if not success:
+            logger.error(f"Failed to update entire dataset after error on batch {batch_start+1}-{batch_end}.")
+            return False
+
+        batch_start += BATCH_SIZE
+        # Optional: Add a small delay between batches to be extra gentle with the API
+        if batch_start < total_rows:
+            time.sleep(1) # Sleep for 1 second between large batches
+
+    logger.info(f"All batches successfully updated.")
+    return True
+
+# --- update_worksheet_from_df (Revised to use batching) --- 
 def update_worksheet_from_df(gspread_client, sheet_id, sheet_name, df_to_write, max_retries=3, initial_delay=1.5):
     if gspread_client is None: logger.error(f"gspread_client is None..."); return False
     if df_to_write is None: logger.error(f"DataFrame to write is None..."); return False
     
+    # 1. Prepare data (same as before)
     if df_to_write.empty:
         if not df_to_write.columns.empty: list_of_lists_for_gspread = [df_to_write.columns.tolist()]
         else: list_of_lists_for_gspread = []
@@ -184,28 +250,39 @@ def update_worksheet_from_df(gspread_client, sheet_id, sheet_name, df_to_write, 
             data_rows.append(processed_row)
         list_of_lists_for_gspread = [headers] + data_rows
     
-    retries = 0; current_delay = initial_delay
-    while retries < max_retries:
-        try:
-            spreadsheet = gspread_client.open_by_key(sheet_id); worksheet = spreadsheet.worksheet(sheet_name)
-            worksheet.clear(); 
-            if list_of_lists_for_gspread: 
-                worksheet.update(list_of_lists_for_gspread, value_input_option='USER_ENTERED')
-                logger.info(f"Successfully updated worksheet '{sheet_name}'...")
-            else: 
-                logger.info(f"Worksheet '{sheet_name}' was cleared (empty input).")
-            return True 
-        except gspread.exceptions.APIError as e:
-            if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 429:
-                retries += 1;
-                if retries >= max_retries: logger.error(f"Write quota exceeded... Max retries. Error: {e}"); return False
-                wait_time = current_delay * (2 ** (retries - 1)); logger.warning(f"Write quota exceeded... Retrying in {wait_time:.2f}s..."); time.sleep(wait_time)
-            else: logger.error(f"Non-quota APIError updating sheet...: {e}", exc_info=True); return False
-        except gspread.exceptions.WorksheetNotFound: logger.error(f"Worksheet '{sheet_name}' not found..."); return False
-        except Exception as e: logger.error(f"General error updating sheet...: {e}", exc_info=True); return False
-    logger.error(f"Failed to update sheet... after {max_retries} retries."); return False
+    # 2. Open the worksheet and clear it
+    worksheet = None
+    try:
+        spreadsheet = gspread_client.open_by_key(sheet_id)
+        worksheet = spreadsheet.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        logger.error(f"Worksheet '{sheet_name}' not found. Cannot proceed with update."); return False
+    except Exception as e:
+        logger.error(f"General error opening worksheet '{sheet_name}': {e}", exc_info=True); return False
 
-# --- NEW FUNCTION: Append Rows to Sheet ---
+    # Clear the worksheet once at the beginning
+    try:
+        worksheet.clear()
+        logger.info(f"Successfully cleared worksheet '{sheet_name}'.")
+    except Exception as e:
+        logger.error(f"Failed to clear worksheet '{sheet_name}': {e}", exc_info=True); return False
+        
+    # 3. Use the new batching function to update the data
+    if not list_of_lists_for_gspread:
+        logger.info("No data to write after clearing worksheet.")
+        return True # Successfully cleared, but nothing to write.
+
+    success = update_cells_in_batches(worksheet, list_of_lists_for_gspread, max_retries, initial_delay)
+    
+    if success:
+        logger.info(f"Successfully updated worksheet '{sheet_name}' from DataFrame.")
+    else:
+        logger.error(f"Failed to update worksheet '{sheet_name}' from DataFrame due to batching error.")
+        
+    return success
+
+
+# --- NEW FUNCTION: Append Rows to Sheet (Existing function remains unchanged as it's already a single API call) ---
 def append_rows_to_sheet(gspread_client, sheet_id, sheet_name, data_list_of_lists, 
                          input_option='USER_ENTERED', max_retries=3, initial_delay=1.5):
     """
