@@ -110,14 +110,23 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
         df_db['payment_amount'] = df_db['payment_amount'].round(2)
         df_db = df_db.dropna(subset=['loan_id', 'payment_date', 'payment_amount'])
         
-        # --- FIX: Convert payment_amount to string to avoid floating point issues
         df_db['payment_amount_str'] = df_db['payment_amount'].astype(str)
         db_counts = df_db.groupby(['loan_id', 'payment_date', 'payment_amount_str']).size()
 
     # --- 4. Count payments by a unique transaction key for comparison ---
-    # --- FIX: Convert payment_amount to string to avoid floating point issues
     df_source['payment_amount_str'] = df_source['payment_amount'].astype(str)
     source_counts = df_source.groupby(['loan_id', 'payment_date', 'payment_amount_str']).size()
+
+    # --- ADDED DEBUG LOGGING ---
+    logger.info("\n--- DEBUG: CLEANED SOURCE DATA SAMPLES ---")
+    logger.info(f"Source DataFrame Size: {len(df_source)}")
+    if not df_source.empty:
+        logger.info(df_source[['loan_id', 'payment_date', 'payment_amount_str']].head(5).to_string())
+    
+    logger.info("\n--- DEBUG: CLEANED DATABASE DATA SAMPLES ---")
+    logger.info(f"Database DataFrame Size: {len(df_db)}")
+    if not df_db.empty:
+        logger.info(df_db[['loan_id', 'payment_date', 'payment_amount_str']].head(5).to_string())
 
     # --- 5. Determine which payments are new ---
     payments_to_insert = []
@@ -132,7 +141,7 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
             new_payment = {
                 "loan_id": loan_id,
                 "payment_date": payment_date,
-                "payment_amount": float(payment_amount_str), # Convert back to float for insertion
+                "payment_amount": float(payment_amount_str),
                 "processed": False,
                 "processed_at": None,
             }
