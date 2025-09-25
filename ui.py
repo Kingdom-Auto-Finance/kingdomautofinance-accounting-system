@@ -65,10 +65,10 @@ st.markdown(
 
 # Branding
 logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Auto-Finance-Logo-Blue_1@4x.png"
-st.image(logo_url, width=250)
 st.markdown(
+    f"<div style='text-align:center; margin-top:-10px; margin-bottom:20px;'><img src='{logo_url}' width='250'></div>"
     "<h1 style='text-align:center'>Kingdom Accounting System</h1>"
-    "<p style='text-align:center;opacity:.75'>v1.21 • Last System Update: 09/12/2025</p>",
+    "<p style='text-align:center;opacity:.75'>v1.23 • Last System Update: 09/25/2025</p>",
     unsafe_allow_html=True
 )
 
