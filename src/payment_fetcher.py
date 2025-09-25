@@ -89,14 +89,28 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
         return False
 
     # --- 2. Load existing payments from Supabase for duplicate check ---
-    existing_payments = set()
+    # Fetch all relevant columns from Supabase
     res = supabase.from_("payments_log").select(
         "loan_id, payment_date, payment_amount"
     ).execute()
+    
+    # Create a set of tuples for quick lookups.
+    # We round the amount to avoid floating-point comparison issues.
+    existing_payments = set()
     if res.data:
         for row in res.data:
-            key = f"{row['loan_id']}_{row['payment_date']}_{row['payment_amount']:.2f}"
-            existing_payments.add(key)
+            # Ensure proper handling of potential None values and convert data types
+            loan_id = str(row.get('loan_id', '')).lower()
+            payment_date = row.get('payment_date')
+            payment_amount = row.get('payment_amount')
+            
+            # Check for valid data before adding to the set
+            if loan_id and payment_date and payment_amount is not None:
+                # Use a tuple for the key to be hashable
+                key = (loan_id, payment_date, round(payment_amount, 2))
+                existing_payments.add(key)
+    logger.info(f"Loaded {len(existing_payments)} existing payments from Supabase for duplicate check.")
+
 
     # --- 3. Parse, Transform, Filter source data ---
     new_payments = []
@@ -157,12 +171,12 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
             parse_errors += 1
             continue
         try:
-            payment_date = pd.to_datetime(
+            payment_date_obj = pd.to_datetime(
                 raw_date, format="%m/%d/%Y", errors="raise"
             ).date()
         except (ValueError, TypeError):
             try:
-                payment_date = pd.to_datetime(raw_date, errors="raise").date()
+                payment_date_obj = pd.to_datetime(raw_date, errors="raise").date()
                 logger.warning(
                     f"Row {index}: Non-standard date '{raw_date}', parsed generally."
                 )
@@ -172,22 +186,39 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
 
         # Apply date filter
         if not fetch_all:
-            if filter_start and payment_date < filter_start:
+            if filter_start and payment_date_obj < filter_start:
                 out_of_range_count += 1
                 continue
-            if filter_end and payment_date > filter_end:
+            if filter_end and payment_date_obj > filter_end:
                 out_of_range_count += 1
                 continue
 
-        payment_date_str = payment_date.strftime("%Y-%m-%d")
-        amount_str = f"{amount:.2f}"
-        key = f"{loan_id}_{payment_date_str}_{amount_str}"
-        if key in existing_payments:
+        # Create a key for the current row using the same logic as the existing payments
+        # The date must be a string in YYYY-MM-DD format for consistency with the Supabase date type
+        payment_date_str = payment_date_obj.strftime("%Y-%m-%d")
+        
+        # We also round the amount to the same precision to ensure accurate comparison
+        rounded_amount = round(amount, 2)
+        
+        # The key is now a tuple of the actual values, not a formatted string
+        current_key = (loan_id, payment_date_str, rounded_amount)
+        
+        if current_key in existing_payments:
             duplicate_count += 1
             continue
 
-        new_payments.append((loan_id, payment_date_str, amount_str))
-        existing_payments.add(key)
+        # Add the new payment to the list to be inserted
+        new_payments.append({
+            "loan_id":        loan_id,
+            "payment_date":   payment_date_str,
+            "payment_amount": rounded_amount,
+            "processed":      False,
+            "processed_at":   None,
+        })
+        
+        # Add the new payment to the set to prevent duplicates within the same run
+        existing_payments.add(current_key)
+
 
     # Log summary
     logger.info(f"Found {len(new_payments)} new payments.")
@@ -205,20 +236,10 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
         logger.info("No new valid payments to insert.")
         return True
 
-    to_insert = []
-    for loan_id, date_str, amount_str in new_payments:
-        to_insert.append({
-            "loan_id":        loan_id,
-            "payment_date":   date_str,
-            "payment_amount": float(amount_str),
-            "processed":      False,
-            "processed_at":   None,
-        })
-
-    sup_res = supabase.from_("payments_log").insert(to_insert).execute()
+    sup_res = supabase.from_("payments_log").insert(new_payments).execute()
     if hasattr(sup_res, "error") and sup_res.error:
         logger.error(f"Failed inserting payments: {sup_res.error}")
         return False
 
-    logger.info(f"Inserted {len(to_insert)} payments into Supabase.")
+    logger.info(f"Inserted {len(new_payments)} payments into Supabase.")
     return True

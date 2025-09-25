@@ -68,7 +68,7 @@ logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Au
 st.markdown(
     f"<div style='text-align:center; margin-top:-10px; margin-bottom:20px;'><img src='{logo_url}' width='250'></div>"
     "<h1 style='text-align:center'>Kingdom Accounting System</h1>"
-    "<p style='text-align:center;opacity:.75'>v1.23 • Last System Update: 09/25/2025</p>",
+    "<p style='text-align:center;opacity:.75'>v1.24 • Last System Update: 09/25/2025</p>",
     unsafe_allow_html=True
 )
 
@@ -242,48 +242,48 @@ if st.button("Generate by Date Range", key="btn_report_range", disabled=st.sessi
         st.session_state["busy"] = False
 
 # Day Breakdown
-if st.button("Day Breakdown", key="btn_day_breakdown", disabled=st.session_state["busy"]):
-    st.session_state["busy"] = True
-    try:
-        with st.spinner("Generating day breakdown…"):
-            out, err = run_cmd(f"python src/main.py report day-breakdown {start_date.isoformat()} {end_date.isoformat()}")
-        st.session_state["report_log"] = out + ("\n" + err if err else "")
-        csv_block = extract_csv(out)
-        if csv_block:
-            df = pd.read_csv(io.StringIO(csv_block))
-            st.dataframe(df)
-            st.download_button(
-                "Download CSV", df.to_csv(index=False),
-                file_name=f"day_breakdown_{start_date}_to_{end_date}.csv",
-                mime="text/csv", key="dl_day"
-            )
-            st.success("Day breakdown generated.")
-        else:
-            st.error("No data returned or parsing error.")
-    finally:
-        st.session_state["busy"] = False
+# if st.button("Day Breakdown", key="btn_day_breakdown", disabled=st.session_state["busy"]):
+#     st.session_state["busy"] = True
+#     try:
+#         with st.spinner("Generating day breakdown…"):
+#             out, err = run_cmd(f"python src/main.py report day-breakdown {start_date.isoformat()} {end_date.isoformat()}")
+#         st.session_state["report_log"] = out + ("\n" + err if err else "")
+#         csv_block = extract_csv(out)
+#         if csv_block:
+#             df = pd.read_csv(io.StringIO(csv_block))
+#             st.dataframe(df)
+#             st.download_button(
+#                 "Download CSV", df.to_csv(index=False),
+#                 file_name=f"day_breakdown_{start_date}_to_{end_date}.csv",
+#                 mime="text/csv", key="dl_day"
+#             )
+#             st.success("Day breakdown generated.")
+#         else:
+#             st.error("No data returned or parsing error.")
+#     finally:
+#         st.session_state["busy"] = False
 
 # Full Breakdown
-if st.button("Full Breakdown", key="btn_full_breakdown", disabled=st.session_state["busy"]):
-    st.session_state["busy"] = True
-    try:
-        with st.spinner("Generating full breakdown…"):
-            out, err = run_cmd(f"python src/main.py report full-breakdown {start_date.isoformat()} {end_date.isoformat()}")
-        st.session_state["report_log"] = out + ("\n" + err if err else "")
-        csv_block = extract_csv(out)
-        if csv_block:
-            df = pd.read_csv(io.StringIO(csv_block))
-            st.dataframe(df)
-            st.download_button(
-                "Download CSV", df.to_csv(index=False),
-                file_name=f"full_breakdown_{start_date}_to_{end_date}.csv",
-                mime="text/csv", key="dl_full"
-            )
-            st.success("Full breakdown generated.")
-        else:
-            st.error("No data returned or parsing error.")
-    finally:
-        st.session_state["busy"] = False
+# if st.button("Full Breakdown", key="btn_full_breakdown", disabled=st.session_state["busy"]):
+#     st.session_state["busy"] = True
+#     try:
+#         with st.spinner("Generating full breakdown…"):
+#             out, err = run_cmd(f"python src/main.py report full-breakdown {start_date.isoformat()} {end_date.isoformat()}")
+#         st.session_state["report_log"] = out + ("\n" + err if err else "")
+#         csv_block = extract_csv(out)
+#         if csv_block:
+#             df = pd.read_csv(io.StringIO(csv_block))
+#             st.dataframe(df)
+#             st.download_button(
+#                 "Download CSV", df.to_csv(index=False),
+#                 file_name=f"full_breakdown_{start_date}_to_{end_date}.csv",
+#                 mime="text/csv", key="dl_full"
+#             )
+#             st.success("Full breakdown generated.")
+#         else:
+#             st.error("No data returned or parsing error.")
+#     finally:
+#         st.session_state["busy"] = False
 
 # Final reports log (toggleable elsewhere)
 if st.session_state["show_report_log"]:
