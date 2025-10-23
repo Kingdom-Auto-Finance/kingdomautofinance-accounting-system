@@ -13,18 +13,16 @@ import time
 # =========================
 # Configuration & Secrets
 # =========================
-# A simple hardcoded password. For production use, please use st.secrets.
-# Example: st.secrets["password"]
 APP_PASSWORD = "Kingdom2025!$$"
 
 # =========================
 # Helpers
 # =========================
-def run_cmd_streaming(cmd: str, log_placeholder, progress_placeholder, task_name: str):
+def run_cmd_streaming(cmd: str, log_key: str, progress_placeholder, task_name: str):
     """
-    Run a shell command and stream output in real-time to placeholders.
+    Run a shell command and stream output in real-time to session state.
     """
-    log_content = ""
+    st.session_state[log_key] = ""
     
     try:
         proc = subprocess.Popen(
@@ -42,29 +40,24 @@ def run_cmd_streaming(cmd: str, log_placeholder, progress_placeholder, task_name
         # Stream output line by line
         for line in iter(proc.stdout.readline, ''):
             if line:
-                log_content += line
-                log_placeholder.markdown(f"<div class='log-box'>{log_content}</div>", unsafe_allow_html=True)
+                st.session_state[log_key] += line
                 
         proc.wait()
         return_code = proc.returncode
         
         if return_code != 0:
-            log_content += f"\n[Process exited with code {return_code}]"
-            log_placeholder.markdown(f"<div class='log-box'>{log_content}</div>", unsafe_allow_html=True)
+            st.session_state[log_key] += f"\n[Process exited with code {return_code}]"
             
     except Exception as e:
-        log_content += f"\n[Error: {str(e)}]"
-        log_placeholder.markdown(f"<div class='log-box'>{log_content}</div>", unsafe_allow_html=True)
+        st.session_state[log_key] += f"\n[Error: {str(e)}]"
     finally:
         progress_placeholder.empty()
         
-    return log_content
+    return st.session_state[log_key]
 
 def extract_csv(raw: str) -> str:
     """
     Pull the first contiguous CSV block from mixed stdout.
-    Heuristic: first line that contains commas and NO spaces = header,
-    then keep reading lines with the same comma count and no spaces.
     """
     lines = raw.splitlines()
     header_idx = next((i for i, l in enumerate(lines) if "," in l and " " not in l), None)
@@ -108,7 +101,7 @@ logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Au
 st.markdown(
     f"<div style='text-align:center; margin-top:-10px; margin-bottom:20px;'><img src='{logo_url}' width='250'></div>"
     "<h1 style='text-align:center'>Kingdom Accounting System</h1>"
-    "<p style='text-align:center;opacity:.75'>v1.39 • Last System Update: 10/23/2025</p>",
+    "<p style='text-align:center;opacity:.75'>v1.40 • Last System Update: 10/23/2025</p>",
     unsafe_allow_html=True
 )
 
@@ -193,13 +186,12 @@ if st.session_state["authenticated"]:
     # Summary by Date Range
     if st.button("Generate by Date Range", key="btn_report_range", disabled=st.session_state["busy"]):
         st.session_state["busy"] = True
+        st.session_state["show_report_log"] = True
         progress_placeholder = st.empty()
-        log_placeholder = st.empty()
         
         cmd = f"python src/main.py report {start_date.isoformat()} {end_date.isoformat()}"
-        out = run_cmd_streaming(cmd, log_placeholder, progress_placeholder, "Generating report")
+        out = run_cmd_streaming(cmd, "report_log", progress_placeholder, "Generating report")
         
-        st.session_state["report_log"] = out
         csv_block = extract_csv(out)
         if csv_block:
             df = pd.read_csv(io.StringIO(csv_block))
@@ -214,59 +206,12 @@ if st.session_state["authenticated"]:
             st.error("No data returned or parsing error.")
         
         st.session_state["busy"] = False
-        log_placeholder.empty()
 
-    # Day Breakdown
-    # if st.button("Day Breakdown", key="btn_day_breakdown", disabled=st.session_state["busy"]):
-    #     st.session_state["busy"] = True
-    #     try:
-    #         with st.spinner("Generating day breakdown…"):
-    #             out, err = run_cmd(f"python src/main.py report day-breakdown {start_date.isoformat()} {end_date.isoformat()}")
-    #         st.session_state["report_log"] = out + ("\n" + err if err else "")
-    #         csv_block = extract_csv(out)
-    #         if csv_block:
-    #             df = pd.read_csv(io.StringIO(csv_block))
-    #             st.dataframe(df)
-    #             st.download_button(
-    #                 "Download CSV", df.to_csv(index=False),
-    #                 file_name=f"day_breakdown_{start_date}_to_{end_date}.csv",
-    #                 mime="text/csv", key="dl_day"
-    #             )
-    #             st.success("Day breakdown generated.")
-    #         else:
-    #             st.error("No data returned or parsing error.")
-    #     finally:
-    #         st.session_state["busy"] = False
-
-    # Full Breakdown
-    # if st.button("Full Breakdown", key="btn_full_breakdown", disabled=st.session_state["busy"]):
-    #     st.session_state["busy"] = True
-    #     try:
-    #         with st.spinner("Generating full breakdown…"):
-    #             out, err = run_cmd(f"python src/main.py report full-breakdown {start_date.isoformat()} {end_date.isoformat()}")
-    #         st.session_state["report_log"] = out + ("\n" + err if err else "")
-    #         csv_block = extract_csv(out)
-    #         if csv_block:
-    #             df = pd.read_csv(io.StringIO(csv_block))
-    #             st.dataframe(df)
-    #             st.download_button(
-    #                 "Download CSV", df.to_csv(index=False),
-    #                 file_name=f"full_breakdown_{start_date}_to_{end_date}.csv",
-    #                 mime="text/csv", key="dl_full"
-    #             )
-    #             st.success("Full breakdown generated.")
-    #         else:
-    #             st.error("No data returned or parsing error.")
-    #     finally:
-    #         st.session_state["busy"] = False
-
-    # Final reports log (toggleable elsewhere)
-    if st.session_state["show_report_log"]:
+    if st.session_state["show_report_log"] and st.session_state["report_log"]:
         st.markdown(f"<div class='log-box'>{st.session_state['report_log']}</div>", unsafe_allow_html=True)
 
-
     # =========================
-    # System Maintenance (Hidden behind expander)
+    # System Maintenance
     # =========================
     st.markdown("---")
     with st.expander("System Maintenance"):
@@ -280,17 +225,15 @@ if st.session_state["authenticated"]:
 
         if st.button("Import Sheets from Google Drive", key="btn_import", disabled=st.session_state["busy"]):
             st.session_state["busy"] = True
+            st.session_state["show_import_log"] = True
             progress_placeholder = st.empty()
-            log_placeholder = st.empty()
             
-            out = run_cmd_streaming("python src/bootstrap.py", log_placeholder, progress_placeholder, "Importing sheets from Google Drive")
+            out = run_cmd_streaming("python src/bootstrap.py", "import_log", progress_placeholder, "Importing sheets from Google Drive")
             
-            st.session_state["import_log"] = out
             st.success("Import completed." if out else "No output.")
             st.session_state["busy"] = False
-            log_placeholder.empty()
 
-        if st.session_state["show_import_log"]:
+        if st.session_state["show_import_log"] and st.session_state["import_log"]:
             st.markdown(f"<div class='log-box'>{st.session_state['import_log']}</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
@@ -303,29 +246,17 @@ if st.session_state["authenticated"]:
             if st.button("📝", key="log_fetch"):
                 st.session_state["show_fetch_log"] = not st.session_state["show_fetch_log"]
 
-        # if st.button("Fetch Recent Payments (7 days)", key="btn_fetch_recent", disabled=st.session_state["busy"]):
-        #    st.session_state["busy"] = True
-        #    try:
-        #        with st.spinner("Fetching recent payments…"):
-        #            out, err = run_cmd("python src/main.py fetch_payments --recent 7")
-        #        st.session_state["fetch_log"] = out + ("\n" + err if err else "")
-        #        st.success("Fetched recent payments.")
-        #    finally:
-        #        st.session_state["busy"] = False
-
         if st.button("Fetch Payments (All Time)", key="btn_fetch_all", disabled=st.session_state["busy"]):
             st.session_state["busy"] = True
+            st.session_state["show_fetch_log"] = True
             progress_placeholder = st.empty()
-            log_placeholder = st.empty()
             
-            out = run_cmd_streaming("python src/main.py fetch_payments --all", log_placeholder, progress_placeholder, "Fetching all payments")
+            out = run_cmd_streaming("python src/main.py fetch_payments --all", "fetch_log", progress_placeholder, "Fetching all payments")
             
-            st.session_state["fetch_log"] = out
             st.success("Fetched all payments.")
             st.session_state["busy"] = False
-            log_placeholder.empty()
 
-        if st.session_state["show_fetch_log"]:
+        if st.session_state["show_fetch_log"] and st.session_state["fetch_log"]:
             st.markdown(f"<div class='log-box'>{st.session_state['fetch_log']}</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
@@ -340,17 +271,16 @@ if st.session_state["authenticated"]:
 
         if st.button("Process Payments", key="btn_process", disabled=st.session_state["busy"]):
             st.session_state["busy"] = True
+            st.session_state["show_process_log"] = True
             progress_placeholder = st.empty()
-            log_placeholder = st.empty()
             
-            out = run_cmd_streaming("python src/main.py process", log_placeholder, progress_placeholder, "Processing payments")
+            out = run_cmd_streaming("python src/main.py process", "process_log", progress_placeholder, "Processing payments")
             
-            st.session_state["process_log"] = out
             st.success("Process completed.")
             
-            # Warn about missing amortization schedules (matches your prior behavior)
+            # Warn about missing amortization schedules
             if "HTTP/2 404 Not Found" in out:
-                ids = re.findall(r"The\\s+([0-9A-Za-z]+)\\s+doesn't have an amortization schedule", out)
+                ids = re.findall(r"The\\s+([0-9A-ZaZ]+)\\s+doesn't have an amortization schedule", out)
                 unique_ids = sorted(set(ids)) if ids else []
                 if unique_ids:
                     joined = ", ".join(f"`{i}`" for i in unique_ids)
@@ -359,16 +289,13 @@ if st.session_state["authenticated"]:
                     st.warning("Some payments found don't have an amortization schedule yet. Please review.")
             
             st.session_state["busy"] = False
-            log_placeholder.empty()
 
-        if st.session_state["show_process_log"]:
+        if st.session_state["show_process_log"] and st.session_state["process_log"]:
             st.markdown(f"<div class='log-box'>{st.session_state['process_log']}</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
         
-        # =========================
         # Amortization Schedule Integrity Check
-        # =========================
         col1, col2 = st.columns([10, 1])
         with col1:
             st.header("Amortization Schedule Integrity")
@@ -378,12 +305,11 @@ if st.session_state["authenticated"]:
 
         if st.button("Check Data Integrity", key="btn_check_integrity", disabled=st.session_state["busy"]):
             st.session_state["busy"] = True
+            st.session_state["show_integrity_log"] = True
             progress_placeholder = st.empty()
-            log_placeholder = st.empty()
             
-            out = run_cmd_streaming("python src/main.py check_integrity", log_placeholder, progress_placeholder, "Checking data integrity")
+            out = run_cmd_streaming("python src/main.py check_integrity", "integrity_log", progress_placeholder, "Checking data integrity")
             
-            st.session_state["integrity_log"] = out
             csv_block = extract_csv(out)
             if csv_block:
                 df = pd.read_csv(io.StringIO(csv_block))
@@ -400,9 +326,8 @@ if st.session_state["authenticated"]:
                 st.error("No data returned or parsing error.")
             
             st.session_state["busy"] = False
-            log_placeholder.empty()
 
-        if st.session_state["show_integrity_log"]:
+        if st.session_state["show_integrity_log"] and st.session_state["integrity_log"]:
             st.markdown(f"<div class='log-box'>{st.session_state['integrity_log']}</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
