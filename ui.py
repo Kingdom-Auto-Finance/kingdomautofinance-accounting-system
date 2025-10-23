@@ -8,7 +8,6 @@ import os
 import sys
 import re
 import threading
-import queue
 import time
 
 # =========================
@@ -21,13 +20,11 @@ APP_PASSWORD = "Kingdom2025!$$"
 # =========================
 # Helpers
 # =========================
-def run_cmd_streaming(cmd: str, log_key: str, progress_key: str):
+def run_cmd_streaming(cmd: str, log_placeholder, progress_placeholder, task_name: str):
     """
-    Run a shell command and stream output in real-time.
-    Updates session state for logs and progress.
+    Run a shell command and stream output in real-time to placeholders.
     """
-    st.session_state[log_key] = ""
-    st.session_state[progress_key] = True
+    log_content = ""
     
     try:
         proc = subprocess.Popen(
@@ -39,20 +36,29 @@ def run_cmd_streaming(cmd: str, log_key: str, progress_key: str):
             bufsize=1
         )
         
+        # Show progress bar
+        progress_placeholder.progress(0.5, text=f"{task_name}...")
+        
+        # Stream output line by line
         for line in iter(proc.stdout.readline, ''):
             if line:
-                st.session_state[log_key] += line
+                log_content += line
+                log_placeholder.markdown(f"<div class='log-box'>{log_content}</div>", unsafe_allow_html=True)
                 
         proc.wait()
         return_code = proc.returncode
         
         if return_code != 0:
-            st.session_state[log_key] += f"\n[Process exited with code {return_code}]"
+            log_content += f"\n[Process exited with code {return_code}]"
+            log_placeholder.markdown(f"<div class='log-box'>{log_content}</div>", unsafe_allow_html=True)
             
     except Exception as e:
-        st.session_state[log_key] += f"\n[Error: {str(e)}]"
+        log_content += f"\n[Error: {str(e)}]"
+        log_placeholder.markdown(f"<div class='log-box'>{log_content}</div>", unsafe_allow_html=True)
     finally:
-        st.session_state[progress_key] = False
+        progress_placeholder.empty()
+        
+    return log_content
 
 def extract_csv(raw: str) -> str:
     """
@@ -102,7 +108,7 @@ logo_url = "https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Au
 st.markdown(
     f"<div style='text-align:center; margin-top:-10px; margin-bottom:20px;'><img src='{logo_url}' width='250'></div>"
     "<h1 style='text-align:center'>Kingdom Accounting System</h1>"
-    "<p style='text-align:center;opacity:.75'>v1.37 • Last System Update: 10/23/2025</p>",
+    "<p style='text-align:center;opacity:.75'>v1.39 • Last System Update: 10/23/2025</p>",
     unsafe_allow_html=True
 )
 
@@ -113,11 +119,10 @@ st.markdown(
 if "busy" not in st.session_state:
     st.session_state["busy"] = False
 
-# Log toggles + content buckets + progress flags
+# Log toggles + content buckets
 for sec in ["import", "fetch", "process", "daily", "report", "integrity"]:
     st.session_state.setdefault(f"show_{sec}_log", False)
     st.session_state.setdefault(f"{sec}_log", "")
-    st.session_state.setdefault(f"{sec}_progress", False)
 
 # Authentication state
 if "authenticated" not in st.session_state:
@@ -154,44 +159,116 @@ if st.session_state["authenticated"]:
         if st.button("📝", key="log_daily"):
             st.session_state["show_daily_log"] = not st.session_state["show_daily_log"]
 
-    if st.button("Generate Summary", key="btn_daily", disabled=st.session_state["busy"]):
+    # if st.button("Generate Summary", key="btn_daily", disabled=st.session_state["busy"]):
+    #     st.session_state["busy"] = True
+    #     try:
+    #         with st.spinner("Generating summary…"):
+    #             out, err = run_cmd("python src/main.py report --all")
+    #         st.session_state["daily_log"] = out + ("\n" + err if err else "")
+    #         csv_block = extract_csv(out)
+    #         if csv_block:
+    #             df = pd.read_csv(io.StringIO(csv_block))
+    #             st.dataframe(df)
+    #             st.download_button(
+    #                 "Download CSV", df.to_csv(index=False),
+    #                 file_name="full_summary.csv", mime="text/csv", key="dl_daily"
+    #             )
+    #             st.success("Summary generated.")
+    #         else:
+    #             st.error("No data returned or parsing error.")
+    #     finally:
+    #         st.session_state["busy"] = False
+    # 
+    # if st.session_state["show_daily_log"]:
+    #     st.markdown(f"<div class='log-box'>{st.session_state['daily_log']}</div>", unsafe_allow_html=True)
+    # 
+    # st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+
+    # =========================
+    # Reports by Date Range
+    # =========================
+    start_date = st.date_input("Start Date", key="inp_start_date")
+    end_date = st.date_input("End Date", key="inp_end_date")
+
+    # Summary by Date Range
+    if st.button("Generate by Date Range", key="btn_report_range", disabled=st.session_state["busy"]):
         st.session_state["busy"] = True
-        thread = threading.Thread(
-            target=run_cmd_streaming,
-            args=("python src/main.py report --all", "daily_log", "daily_progress")
-        )
-        thread.start()
-        st.rerun()
-
-    # Show progress bar if task is running
-    if st.session_state["daily_progress"]:
-        st.progress(0.5, text="Generating summary...")
-        time.sleep(0.5)
-        st.rerun()
-    elif st.session_state["daily_log"] and not st.session_state["daily_progress"]:
-        st.session_state["busy"] = False
-        csv_data = extract_csv(st.session_state["daily_log"])
-        if csv_data:
-            try:
-                df = pd.read_csv(io.StringIO(csv_data))
-                st.dataframe(df, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Could not parse CSV: {e}")
+        progress_placeholder = st.empty()
+        log_placeholder = st.empty()
+        
+        cmd = f"python src/main.py report {start_date.isoformat()} {end_date.isoformat()}"
+        out = run_cmd_streaming(cmd, log_placeholder, progress_placeholder, "Generating report")
+        
+        st.session_state["report_log"] = out
+        csv_block = extract_csv(out)
+        if csv_block:
+            df = pd.read_csv(io.StringIO(csv_block))
+            st.dataframe(df)
+            st.download_button(
+                "Download CSV", df.to_csv(index=False),
+                file_name=f"report_{start_date}_to_{end_date}.csv",
+                mime="text/csv", key="dl_range"
+            )
+            st.success("Report generated.")
         else:
-            st.info("No CSV data found in output.")
+            st.error("No data returned or parsing error.")
+        
+        st.session_state["busy"] = False
+        log_placeholder.empty()
 
-    # Show log modal
-    if st.session_state["show_daily_log"]:
-        with st.expander("📋 Live Log", expanded=True):
-            st.markdown(f"<div class='log-box'>{st.session_state['daily_log']}</div>", unsafe_allow_html=True)
-            if st.session_state["daily_progress"]:
-                st.info("Task is running... Log updates in real-time.")
+    # Day Breakdown
+    # if st.button("Day Breakdown", key="btn_day_breakdown", disabled=st.session_state["busy"]):
+    #     st.session_state["busy"] = True
+    #     try:
+    #         with st.spinner("Generating day breakdown…"):
+    #             out, err = run_cmd(f"python src/main.py report day-breakdown {start_date.isoformat()} {end_date.isoformat()}")
+    #         st.session_state["report_log"] = out + ("\n" + err if err else "")
+    #         csv_block = extract_csv(out)
+    #         if csv_block:
+    #             df = pd.read_csv(io.StringIO(csv_block))
+    #             st.dataframe(df)
+    #             st.download_button(
+    #                 "Download CSV", df.to_csv(index=False),
+    #                 file_name=f"day_breakdown_{start_date}_to_{end_date}.csv",
+    #                 mime="text/csv", key="dl_day"
+    #             )
+    #             st.success("Day breakdown generated.")
+    #         else:
+    #             st.error("No data returned or parsing error.")
+    #     finally:
+    #         st.session_state["busy"] = False
 
+    # Full Breakdown
+    # if st.button("Full Breakdown", key="btn_full_breakdown", disabled=st.session_state["busy"]):
+    #     st.session_state["busy"] = True
+    #     try:
+    #         with st.spinner("Generating full breakdown…"):
+    #             out, err = run_cmd(f"python src/main.py report full-breakdown {start_date.isoformat()} {end_date.isoformat()}")
+    #         st.session_state["report_log"] = out + ("\n" + err if err else "")
+    #         csv_block = extract_csv(out)
+    #         if csv_block:
+    #             df = pd.read_csv(io.StringIO(csv_block))
+    #             st.dataframe(df)
+    #             st.download_button(
+    #                 "Download CSV", df.to_csv(index=False),
+    #                 file_name=f"full_breakdown_{start_date}_to_{end_date}.csv",
+    #                 mime="text/csv", key="dl_full"
+    #             )
+    #             st.success("Full breakdown generated.")
+    #         else:
+    #             st.error("No data returned or parsing error.")
+    #     finally:
+    #         st.session_state["busy"] = False
+
+    # Final reports log (toggleable elsewhere)
+    if st.session_state["show_report_log"]:
+        st.markdown(f"<div class='log-box'>{st.session_state['report_log']}</div>", unsafe_allow_html=True)
+
+
+    # =========================
+    # System Maintenance (Hidden behind expander)
+    # =========================
     st.markdown("---")
-
-    # =========================
-    # System Maintenance
-    # =========================
     with st.expander("System Maintenance"):
         # Import Amortization Spreadsheets
         col1, col2 = st.columns([10, 1])
@@ -203,26 +280,18 @@ if st.session_state["authenticated"]:
 
         if st.button("Import Sheets from Google Drive", key="btn_import", disabled=st.session_state["busy"]):
             st.session_state["busy"] = True
-            thread = threading.Thread(
-                target=run_cmd_streaming,
-                args=("python src/bootstrap.py", "import_log", "import_progress")
-            )
-            thread.start()
-            st.rerun()
-
-        if st.session_state["import_progress"]:
-            st.progress(0.5, text="Importing sheets from Google Drive...")
-            time.sleep(0.5)
-            st.rerun()
-        elif st.session_state["import_log"] and not st.session_state["import_progress"]:
+            progress_placeholder = st.empty()
+            log_placeholder = st.empty()
+            
+            out = run_cmd_streaming("python src/bootstrap.py", log_placeholder, progress_placeholder, "Importing sheets from Google Drive")
+            
+            st.session_state["import_log"] = out
+            st.success("Import completed." if out else "No output.")
             st.session_state["busy"] = False
-            st.success("Import completed.")
+            log_placeholder.empty()
 
         if st.session_state["show_import_log"]:
-            with st.expander("📋 Live Log", expanded=True):
-                st.markdown(f"<div class='log-box'>{st.session_state['import_log']}</div>", unsafe_allow_html=True)
-                if st.session_state["import_progress"]:
-                    st.info("Task is running... Log updates in real-time.")
+            st.markdown(f"<div class='log-box'>{st.session_state['import_log']}</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
 
@@ -234,28 +303,30 @@ if st.session_state["authenticated"]:
             if st.button("📝", key="log_fetch"):
                 st.session_state["show_fetch_log"] = not st.session_state["show_fetch_log"]
 
+        # if st.button("Fetch Recent Payments (7 days)", key="btn_fetch_recent", disabled=st.session_state["busy"]):
+        #    st.session_state["busy"] = True
+        #    try:
+        #        with st.spinner("Fetching recent payments…"):
+        #            out, err = run_cmd("python src/main.py fetch_payments --recent 7")
+        #        st.session_state["fetch_log"] = out + ("\n" + err if err else "")
+        #        st.success("Fetched recent payments.")
+        #    finally:
+        #        st.session_state["busy"] = False
+
         if st.button("Fetch Payments (All Time)", key="btn_fetch_all", disabled=st.session_state["busy"]):
             st.session_state["busy"] = True
-            thread = threading.Thread(
-                target=run_cmd_streaming,
-                args=("python src/main.py fetch_payments --all", "fetch_log", "fetch_progress")
-            )
-            thread.start()
-            st.rerun()
-
-        if st.session_state["fetch_progress"]:
-            st.progress(0.5, text="Fetching all payments...")
-            time.sleep(0.5)
-            st.rerun()
-        elif st.session_state["fetch_log"] and not st.session_state["fetch_progress"]:
-            st.session_state["busy"] = False
+            progress_placeholder = st.empty()
+            log_placeholder = st.empty()
+            
+            out = run_cmd_streaming("python src/main.py fetch_payments --all", log_placeholder, progress_placeholder, "Fetching all payments")
+            
+            st.session_state["fetch_log"] = out
             st.success("Fetched all payments.")
+            st.session_state["busy"] = False
+            log_placeholder.empty()
 
         if st.session_state["show_fetch_log"]:
-            with st.expander("📋 Live Log", expanded=True):
-                st.markdown(f"<div class='log-box'>{st.session_state['fetch_log']}</div>", unsafe_allow_html=True)
-                if st.session_state["fetch_progress"]:
-                    st.info("Task is running... Log updates in real-time.")
+            st.markdown(f"<div class='log-box'>{st.session_state['fetch_log']}</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
 
@@ -269,30 +340,35 @@ if st.session_state["authenticated"]:
 
         if st.button("Process Payments", key="btn_process", disabled=st.session_state["busy"]):
             st.session_state["busy"] = True
-            thread = threading.Thread(
-                target=run_cmd_streaming,
-                args=("python src/main.py process", "process_log", "process_progress")
-            )
-            thread.start()
-            st.rerun()
-
-        if st.session_state["process_progress"]:
-            st.progress(0.5, text="Processing payments...")
-            time.sleep(0.5)
-            st.rerun()
-        elif st.session_state["process_log"] and not st.session_state["process_progress"]:
-            st.session_state["busy"] = False
+            progress_placeholder = st.empty()
+            log_placeholder = st.empty()
+            
+            out = run_cmd_streaming("python src/main.py process", log_placeholder, progress_placeholder, "Processing payments")
+            
+            st.session_state["process_log"] = out
             st.success("Process completed.")
+            
+            # Warn about missing amortization schedules (matches your prior behavior)
+            if "HTTP/2 404 Not Found" in out:
+                ids = re.findall(r"The\\s+([0-9A-Za-z]+)\\s+doesn't have an amortization schedule", out)
+                unique_ids = sorted(set(ids)) if ids else []
+                if unique_ids:
+                    joined = ", ".join(f"`{i}`" for i in unique_ids)
+                    st.warning(f"The following loan IDs don't have an amortization schedule yet: {joined}. Please review.")
+                else:
+                    st.warning("Some payments found don't have an amortization schedule yet. Please review.")
+            
+            st.session_state["busy"] = False
+            log_placeholder.empty()
 
         if st.session_state["show_process_log"]:
-            with st.expander("📋 Live Log", expanded=True):
-                st.markdown(f"<div class='log-box'>{st.session_state['process_log']}</div>", unsafe_allow_html=True)
-                if st.session_state["process_progress"]:
-                    st.info("Task is running... Log updates in real-time.")
+            st.markdown(f"<div class='log-box'>{st.session_state['process_log']}</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
-
-        # Amortization Schedule Integrity
+        
+        # =========================
+        # Amortization Schedule Integrity Check
+        # =========================
         col1, col2 = st.columns([10, 1])
         with col1:
             st.header("Amortization Schedule Integrity")
@@ -300,28 +376,36 @@ if st.session_state["authenticated"]:
             if st.button("📝", key="log_integrity"):
                 st.session_state["show_integrity_log"] = not st.session_state["show_integrity_log"]
 
-        if st.button("Check Integrity", key="btn_integrity", disabled=st.session_state["busy"]):
+        if st.button("Check Data Integrity", key="btn_check_integrity", disabled=st.session_state["busy"]):
             st.session_state["busy"] = True
-            thread = threading.Thread(
-                target=run_cmd_streaming,
-                args=("python src/main.py check_integrity", "integrity_log", "integrity_progress")
-            )
-            thread.start()
-            st.rerun()
-
-        if st.session_state["integrity_progress"]:
-            st.progress(0.5, text="Checking integrity...")
-            time.sleep(0.5)
-            st.rerun()
-        elif st.session_state["integrity_log"] and not st.session_state["integrity_progress"]:
+            progress_placeholder = st.empty()
+            log_placeholder = st.empty()
+            
+            out = run_cmd_streaming("python src/main.py check_integrity", log_placeholder, progress_placeholder, "Checking data integrity")
+            
+            st.session_state["integrity_log"] = out
+            csv_block = extract_csv(out)
+            if csv_block:
+                df = pd.read_csv(io.StringIO(csv_block))
+                st.dataframe(df)
+                st.download_button(
+                    "Download Report", df.to_csv(index=False),
+                    file_name="integrity_report.csv", mime="text/csv", key="dl_integrity"
+                )
+                if not df[df['status'] == 'Mismatch'].empty:
+                    st.warning("⚠️ Discrepancies found! Please review the report.")
+                else:
+                    st.success("✅ All schedule tables are in sync with Google Sheets.")
+            else:
+                st.error("No data returned or parsing error.")
+            
             st.session_state["busy"] = False
-            st.success("Integrity check completed.")
+            log_placeholder.empty()
 
         if st.session_state["show_integrity_log"]:
-            with st.expander("📋 Live Log", expanded=True):
-                st.markdown(f"<div class='log-box'>{st.session_state['integrity_log']}</div>", unsafe_allow_html=True)
-                if st.session_state["integrity_progress"]:
-                    st.info("Task is running... Log updates in real-time.")
+            st.markdown(f"<div class='log-box'>{st.session_state['integrity_log']}</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
 
     st.markdown("---")
     if st.button("🚪 Log Out"):
