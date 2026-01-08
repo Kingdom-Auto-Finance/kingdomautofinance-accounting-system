@@ -3,8 +3,9 @@
   "version": "2.0.0",
   "private": true,
   "scripts": {
+    "validate-env": "node scripts/validate-env.js",
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run validate-env && next build",
     "start": "next start",
     "lint": "next lint"
   },
