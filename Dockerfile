@@ -2,14 +2,39 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Install Node.js 18.x
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+COPY requirements.txt backend/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r backend/requirements.txt
 
-COPY . .
+# Copy Python code
+COPY src/ ./src/
+COPY backend/ ./backend/
+COPY *.py ./
 
-ENV STREAMLIT_SERVER_HEADLESS=true
-ENV STREAMLIT_SERVER_PORT=8080
-ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
+# Build Next.js frontend
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
 
-CMD ["streamlit", "run", "ui.py", "--server.port=8080", "--server.address=0.0.0.0"]
+# Back to root
+WORKDIR /app
+
+# Copy startup script
+COPY start-services.sh ./
+RUN chmod +x start-services.sh
+
+# Environment variables
+ENV NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV PYTHONPATH=/app
+
+EXPOSE 3000 8000
+
+CMD ["./start-services.sh"]
