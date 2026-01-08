@@ -33,7 +33,9 @@ RUN npm run build
 # Copy Next.js standalone build files
 RUN cp -r .next/standalone/. /app/nextjs/ && \
     cp -r .next/static /app/nextjs/.next/static && \
-    ([ -d public ] && cp -r public /app/nextjs/public || true)
+    ([ -d public ] && cp -r public /app/nextjs/public || true) && \
+    cp server-with-proxy.js /app/nextjs/ && \
+    cp -r node_modules /app/nextjs/
 
 # Back to root
 WORKDIR /app
