@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# Startup script to run both Streamlit and FastAPI together
-# This allows both UIs to coexist during the migration period
+# Startup script to run FastAPI backend and Next.js frontend
 
 echo "Starting Kingdom Auto Finance Accounting System..."
 echo "=================================================="
@@ -16,11 +15,12 @@ echo "FastAPI started with PID: $FASTAPI_PID"
 # Wait a moment for FastAPI to start
 sleep 2
 
-# Start Streamlit in the foreground
-echo "Starting Streamlit UI on port 8080..."
-cd /app
-streamlit run ui.py --server.port=8080 --server.address=0.0.0.0
+# Start Next.js in the foreground
+echo "Starting Next.js frontend on port 3000..."
+cd /app/nextjs
+node server.js &
+NEXTJS_PID=$!
+echo "Next.js started with PID: $NEXTJS_PID"
 
-# If Streamlit exits, kill FastAPI too
-echo "Streamlit exited, shutting down FastAPI..."
-kill $FASTAPI_PID 2>/dev/null
+# Wait for both processes
+wait $FASTAPI_PID $NEXTJS_PID

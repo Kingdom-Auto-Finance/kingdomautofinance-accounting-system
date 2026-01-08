@@ -34,8 +34,8 @@ RUN cp -r .next/standalone/. /app/nextjs/ && \
 WORKDIR /app
 
 # Copy startup script
-COPY start-services.sh ./
-RUN chmod +x start-services.sh
+COPY start.sh ./
+RUN chmod +x start.sh
 
 # Environment variables
 ENV NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -43,4 +43,4 @@ ENV PYTHONPATH=/app
 
 EXPOSE 3000 8000
 
-CMD ["./start-services.sh"]
+CMD ["./start.sh"]
