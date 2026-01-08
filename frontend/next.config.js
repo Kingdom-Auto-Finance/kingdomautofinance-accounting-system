@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   // Ensure environment variables are exposed
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
@@ -8,6 +9,7 @@ const nextConfig = {
   webpack: (config, { isServer }) => {
     if (isServer) {
       console.log('🔍 Build-time NEXT_PUBLIC_API_URL:', process.env.NEXT_PUBLIC_API_URL);
+      console.log('🔍 Build mode: standalone');
     }
     return config;
   },
