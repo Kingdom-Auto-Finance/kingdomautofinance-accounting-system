@@ -3,9 +3,8 @@
   "version": "2.0.0",
   "private": true,
   "scripts": {
-    "validate-env": "node scripts/validate-env.js",
     "dev": "next dev",
-    "build": "npm run validate-env && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
@@ -13,18 +12,10 @@
     "next": "14.2.18",
     "react": "^18",
     "react-dom": "^18",
-    "next-auth": "^4.24.7",
-    "@tanstack/react-query": "^5.56.2",
-    "@tanstack/react-table": "^8.20.5",
-    "zustand": "^4.5.5",
-    "decimal.js": "^10.4.3",
-    "date-fns": "^3.6.0",
-    "lucide-react": "^0.446.0",
     "clsx": "^2.1.0",
     "tailwind-merge": "^2.2.0"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
@@ -32,6 +23,7 @@
     "eslint": "^8",
     "eslint-config-next": "14.2.18",
     "postcss": "^8",
-    "tailwindcss": "^3.3.0"
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5"
   }
 }

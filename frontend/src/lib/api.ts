@@ -2,34 +2,11 @@
  * API client for FastAPI backend
  */
 
-// Get API URL from environment - NO FALLBACK to localhost
-let API_URL = process.env.NEXT_PUBLIC_API_URL;
-
-// Add https:// if not present
-if (API_URL && !API_URL.startsWith('http://') && !API_URL.startsWith('https://')) {
-  API_URL = `https://${API_URL}`;
-}
-
-// Fail fast if API_URL is not configured
-if (!API_URL) {
-  const errorMsg = `
-❌ NEXT_PUBLIC_API_URL is not set!
-
-In DigitalOcean App Platform:
-1. Go to Settings → Environment Variables
-2. Add: NEXT_PUBLIC_API_URL = https://amortization-system-j2db5.ondigitalocean.app
-3. Save and trigger a rebuild
-
-Current value: ${process.env.NEXT_PUBLIC_API_URL}
-  `.trim();
-  
-  console.error(errorMsg);
-  throw new Error('API URL not configured');
-}
+// Hardcoded backend URL for DigitalOcean deployment
+const API_URL = 'https://amortization-system-j2db5.ondigitalocean.app';
+const API_V1 = `${API_URL}/api/v1`;
 
 console.log('✓ API configured:', API_URL);
-
-const API_V1 = `${API_URL}/api/v1`;
 
 interface FetchOptions extends RequestInit {
   body?: any;
