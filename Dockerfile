@@ -21,9 +21,14 @@ COPY *.py ./
 # Build Next.js frontend
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci
+RUN npm install
 COPY frontend/ ./
 RUN npm run build
+
+# Copy Next.js standalone build files
+RUN cp -r .next/standalone/. /app/nextjs/ && \
+    cp -r .next/static /app/nextjs/.next/static && \
+    ([ -d public ] && cp -r public /app/nextjs/public || true)
 
 # Back to root
 WORKDIR /app

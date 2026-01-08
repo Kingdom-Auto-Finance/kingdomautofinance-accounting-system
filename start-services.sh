@@ -16,7 +16,7 @@ sleep 5
 
 # Start Next.js frontend
 echo "Starting Next.js on port 3000..."
-cd /app/frontend/.next/standalone
+cd /app/nextjs
 PORT=3000 node server.js &
 NEXTJS_PID=$!
 
