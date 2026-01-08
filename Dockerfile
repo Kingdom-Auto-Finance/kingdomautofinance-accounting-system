@@ -33,9 +33,7 @@ RUN npm run build
 # Copy Next.js standalone build files
 RUN cp -r .next/standalone/. /app/nextjs/ && \
     cp -r .next/static /app/nextjs/.next/static && \
-    ([ -d public ] && cp -r public /app/nextjs/public || true) && \
-    cp server-with-proxy.js /app/nextjs/ && \
-    cp -r node_modules /app/nextjs/
+    ([ -d public ] && cp -r public /app/nextjs/public || true)
 
 # Back to root
 WORKDIR /app
@@ -48,6 +46,6 @@ RUN chmod +x start.sh
 ENV NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV PYTHONPATH=/app
 
-EXPOSE 3000 8000
+EXPOSE 8080 8000
 
 CMD ["./start.sh"]

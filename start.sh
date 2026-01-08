@@ -15,10 +15,10 @@ echo "FastAPI started with PID: $FASTAPI_PID"
 # Wait a moment for FastAPI to start
 sleep 2
 
-# Start Next.js with custom proxy server in the foreground
-echo "Starting Next.js frontend with API proxy on port 3000..."
+# Start Next.js in the foreground (on port 8080 for DigitalOcean)
+echo "Starting Next.js frontend on port 8080..."
 cd /app/nextjs
-node server-with-proxy.js &
+PORT=8080 HOSTNAME=0.0.0.0 node server.js &
 NEXTJS_PID=$!
 echo "Next.js started with PID: $NEXTJS_PID"
 

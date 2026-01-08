@@ -5,20 +5,20 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
   },
-  // Proxy API requests to FastAPI backend
+  // Proxy API requests to FastAPI backend (use 127.0.0.1 to force IPv4)
   async rewrites() {
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:8000/api/:path*',
+        destination: 'http://127.0.0.1:8000/api/:path*',
       },
       {
         source: '/health',
-        destination: 'http://localhost:8000/health',
+        destination: 'http://127.0.0.1:8000/health',
       },
       {
         source: '/docs',
-        destination: 'http://localhost:8000/docs',
+        destination: 'http://127.0.0.1:8000/docs',
       },
     ];
   },
