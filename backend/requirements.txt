@@ -1,0 +1,23 @@
+# FastAPI and server
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+pydantic==2.6.1
+pydantic-settings==2.1.0
+
+# Database
+supabase==2.3.4
+alembic==1.13.1
+
+# Google APIs (reuse existing dependencies)
+gspread==5.12.4
+google-auth==2.27.0
+google-cloud-secret-manager==2.18.2
+
+# Utilities
+python-dotenv==1.0.1
+python-multipart==0.0.9
+
+# Testing
+pytest==8.0.0
+pytest-asyncio==0.23.4
+httpx==0.26.0
