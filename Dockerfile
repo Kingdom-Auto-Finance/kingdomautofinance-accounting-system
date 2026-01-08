@@ -16,12 +16,17 @@ RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
 # Copy Python code
 COPY src/ ./src/
 COPY backend/ ./backend/
-COPY *.py ./
 
 # Build Next.js frontend
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm install
+ENV npm_config_cache=/tmp/.npm
+RUN npm config set fetch-retries 5 \
+    && npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 120000 \
+    && npm config set prefer-offline true \
+    && npm config set audit false \
+    && npm ci
 COPY frontend/ ./
 RUN npm run build
 

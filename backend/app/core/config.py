@@ -35,6 +35,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:8501",
         "https://accounting.kingdomautofinance.com",
+        "https://amortization-system-j2db5.ondigitalocean.app",
     ]
 
     class Config:
