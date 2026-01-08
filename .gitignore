@@ -14,7 +14,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -182,3 +181,6 @@ logs/                 # Don't commit log files
 *.xlsx                # If you were using local Excel files
 *.csv                 # If you were using local CSV files
 data/                 # If you had a local data directory (not needed for GSheets)
+
+# Allow frontend lib directory
+!frontend/src/lib/
