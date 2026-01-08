@@ -2,7 +2,33 @@
  * API client for FastAPI backend
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Get API URL from environment - NO FALLBACK to localhost
+let API_URL = process.env.NEXT_PUBLIC_API_URL;
+
+// Add https:// if not present
+if (API_URL && !API_URL.startsWith('http://') && !API_URL.startsWith('https://')) {
+  API_URL = `https://${API_URL}`;
+}
+
+// Fail fast if API_URL is not configured
+if (!API_URL) {
+  const errorMsg = `
+❌ NEXT_PUBLIC_API_URL is not set!
+
+In DigitalOcean App Platform:
+1. Go to Settings → Environment Variables
+2. Add: NEXT_PUBLIC_API_URL = https://amortization-system-j2db5.ondigitalocean.app
+3. Save and trigger a rebuild
+
+Current value: ${process.env.NEXT_PUBLIC_API_URL}
+  `.trim();
+  
+  console.error(errorMsg);
+  throw new Error('API URL not configured');
+}
+
+console.log('✓ API configured:', API_URL);
+
 const API_V1 = `${API_URL}/api/v1`;
 
 interface FetchOptions extends RequestInit {
@@ -24,7 +50,10 @@ async function fetchAPI<T>(endpoint: string, options: FetchOptions = {}): Promis
     config.body = JSON.stringify(body);
   }
 
-  const response = await fetch(`${API_V1}${endpoint}`, config);
+  const url = `${API_V1}${endpoint}`;
+  console.log('🔄 API Request:', options.method || 'GET', url);
+
+  const response = await fetch(url, config);
 
   if (!response.ok) {
     const error = await response.text();
@@ -116,12 +145,10 @@ export const jobsAPI = {
 export const healthCheck = () =>
   fetch(`${API_URL}/health`).then(res => res.json());
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
-
 class ApiClient {
   private baseURL: string;
 
-  constructor(baseURL: string = API_BASE_URL) {
+  constructor(baseURL: string = API_URL) {
     this.baseURL = baseURL;
   }
 
