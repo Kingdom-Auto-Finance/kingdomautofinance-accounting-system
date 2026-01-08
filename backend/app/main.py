@@ -46,9 +46,29 @@ async def health_check():
     return {"status": "healthy"}
 
 
-# TODO: Import and include API routers
-# from app.api import payments, reports, amortization, jobs
-# app.include_router(payments.router, prefix=f"{settings.API_V1_PREFIX}/payments", tags=["payments"])
-# app.include_router(reports.router, prefix=f"{settings.API_V1_PREFIX}/reports", tags=["reports"])
-# app.include_router(amortization.router, prefix=f"{settings.API_V1_PREFIX}/amortization", tags=["amortization"])
-# app.include_router(jobs.router, prefix=f"{settings.API_V1_PREFIX}/jobs", tags=["jobs"])
+# Include API routers
+from app.api import payments, reports, amortization, jobs
+
+app.include_router(
+    payments.router,
+    prefix=f"{settings.API_V1_PREFIX}/payments",
+    tags=["payments"]
+)
+
+app.include_router(
+    reports.router,
+    prefix=f"{settings.API_V1_PREFIX}/reports",
+    tags=["reports"]
+)
+
+app.include_router(
+    amortization.router,
+    prefix=f"{settings.API_V1_PREFIX}/amortization",
+    tags=["amortization"]
+)
+
+app.include_router(
+    jobs.router,
+    prefix=f"{settings.API_V1_PREFIX}/jobs",
+    tags=["jobs"]
+)
