@@ -9,8 +9,9 @@ RUN apt-get update && apt-get install -y curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements.txt backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r backend/requirements.txt
+COPY requirements.txt ./
+COPY backend/requirements.txt ./backend-requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
 
 # Copy Python code
 COPY src/ ./src/
