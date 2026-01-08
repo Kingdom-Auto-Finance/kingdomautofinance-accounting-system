@@ -170,7 +170,7 @@ def run_migration(sql_file: Path) -> None:
     all_exist = True
     for table in tables_to_check:
         exists = check_table_exists(cursor, table)
-        status = "✓" if exists else "✗"
+        status = "✓" if exists "✗"
         print(f"  {status} {table}")
         if not exists:
             all_exist = False
@@ -214,20 +214,22 @@ if __name__ == "__main__":
         version="1.0.0"
     )
 
-    # CORS Configuration - Allow frontend domains
+    # ============================================================================
+    # CORS Configuration - Required for frontend to access backend
+    # ============================================================================
     origins = [
-        "https://accounting.kingdomautofinance.com",
-        "https://amortization-system-j2db5.ondigitalocean.app",
-        "http://localhost:3000",
-        "http://localhost:8000",
+        "https://accounting.kingdomautofinance.com",  # Production frontend
+        "https://amortization-system-j2db5.ondigitalocean.app",  # DigitalOcean frontend
+        "http://localhost:3000",  # Local development
+        "http://localhost:8000",  # Local development
     ]
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=origins,  # Allow these specific origins
+        allow_credentials=True,  # Allow cookies/auth headers
+        allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, OPTIONS)
+        allow_headers=["*"],  # Allow all headers
     )
 
     main()
