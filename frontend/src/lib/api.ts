@@ -2,8 +2,8 @@
  * API client for FastAPI backend
  */
 
-// Hardcoded backend URL for DigitalOcean deployment
-const API_URL = 'https://amortization-system-j2db5.ondigitalocean.app';
+// Use same origin for API requests (Next.js will proxy to FastAPI backend)
+const API_URL = typeof window !== 'undefined' ? window.location.origin : '';
 const API_V1 = `${API_URL}/api/v1`;
 
 console.log('✓ API configured:', API_URL);
