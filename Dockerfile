@@ -26,7 +26,7 @@ RUN npm config set fetch-retries 5 \
     && npm config set fetch-retry-maxtimeout 120000 \
     && npm config set prefer-offline true \
     && npm config set audit false \
-    && npm ci
+    && npm install
 COPY frontend/ ./
 RUN npm run build
 
