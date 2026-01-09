@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Layout from '@/components/Layout';
+import DateInput from '@/components/DateInput';
 import { reportsAPI } from '@/lib/api';
 import { downloadCSV, formatDate } from '@/lib/utils';
 
@@ -104,10 +105,9 @@ export default function ReportsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Start Date
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={setStartDate}
                 placeholder="mm/dd/yyyy"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
@@ -117,10 +117,9 @@ export default function ReportsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 End Date
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                onChange={setEndDate}
                 placeholder="mm/dd/yyyy"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />

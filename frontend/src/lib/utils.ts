@@ -29,6 +29,39 @@ export function formatDate(date: Date | string): string {
   return `${month}/${day}/${year}`;
 }
 
+/**
+ * Parse mm/dd/yyyy format to ISO format (YYYY-MM-DD)
+ */
+export function parseDate(mmddyyyy: string): string {
+  if (!mmddyyyy || mmddyyyy.length < 8) return '';
+
+  // Remove any non-digit characters
+  const digits = mmddyyyy.replace(/\D/g, '');
+  if (digits.length < 8) return '';
+
+  const month = digits.substring(0, 2);
+  const day = digits.substring(2, 4);
+  const year = digits.substring(4, 8);
+
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Validate date string in mm/dd/yyyy format
+ */
+export function isValidDate(dateString: string): boolean {
+  if (!dateString) return false;
+
+  // Check format: mm/dd/yyyy
+  const regex = /^(0[1-9]|1[0-2])\/(0[1-9]|[12][0-9]|3[01])\/\d{4}$/;
+  if (!regex.test(dateString)) return false;
+
+  // Check if it's a valid date
+  const isoDate = parseDate(dateString);
+  const date = new Date(isoDate);
+  return date instanceof Date && !isNaN(date.getTime());
+}
+
 /*
  * Format date with time
  */

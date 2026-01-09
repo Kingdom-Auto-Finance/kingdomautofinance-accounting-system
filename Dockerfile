@@ -11,7 +11,10 @@ RUN apt-get update && apt-get install -y curl && \
 # Install Python dependencies
 COPY requirements.txt ./
 COPY backend/requirements.txt ./backend-requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt && \
+    echo "Verifying critical package versions..." && \
+    pip show supabase | grep -E "^Version:" && \
+    pip show httpx | grep -E "^Version:"
 
 # Copy Python code
 COPY src/ ./src/
