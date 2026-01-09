@@ -14,4 +14,4 @@ python-multipart==0.0.9
 # Testing
 pytest<8.0,>=7.0
 pytest-asyncio==0.23.4
-httpx<0.26,>=0.24
+httpx==0.24.1
