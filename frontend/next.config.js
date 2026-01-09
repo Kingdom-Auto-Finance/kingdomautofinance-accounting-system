@@ -5,6 +5,16 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
   },
+  // Allow external images from Kingdom Auto Finance website
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'kingdomautofinance.com',
+        pathname: '/wp-content/uploads/**',
+      },
+    ],
+  },
   // Proxy API requests to FastAPI backend (use 127.0.0.1 to force IPv4)
   async rewrites() {
     return [

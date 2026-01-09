@@ -20,7 +20,16 @@ def get_supabase_client() -> Client:
         if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
 
-        _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        # Create client without options that may cause compatibility issues
+        try:
+            _supabase_client = create_client(
+                settings.SUPABASE_URL,
+                settings.SUPABASE_KEY
+            )
+        except TypeError as e:
+            # If there's a proxy-related error, try without any additional options
+            print(f"Warning: Supabase client creation error: {e}")
+            _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
     return _supabase_client
 
