@@ -19,13 +19,13 @@ export function formatCurrency(amount: number): string {
 }
 
 /**
- * Format dates
+ * Format dates as mm/dd/yyyy
  */
 export function formatDate(date: Date | string): string {
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
-    month: 'short',
-    day: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
   }).format(new Date(date));
 }
 

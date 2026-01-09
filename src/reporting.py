@@ -21,7 +21,7 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
     filtered by date range unless all_dates=True.
     Returns a DataFrame with columns:
       - loan_id
-      - payment_date (as datetime.date)
+      - payment_date (as string in mm/dd/yyyy format)
       - principal_amount (float)
       - interest_amount (float)
       - fee_amount (float)
@@ -68,9 +68,11 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
             if raw_date is None:
                 continue
             payment_date = datetime.fromisoformat(raw_date.rstrip("Z")).date()
+            # Format date as mm/dd/yyyy for CSV export
+            formatted_date = payment_date.strftime("%m/%d/%Y")
             rows.append({
                 "loan_id": loan_id,
-                "payment_date": payment_date,
+                "payment_date": formatted_date,
                 "principal_amount": float(r.get("principalpaid", 0.0)),
                 "interest_amount": float(r.get("interestpaid", 0.0)),
                 "fee_amount": float(r.get("latefee", 0.0)),
