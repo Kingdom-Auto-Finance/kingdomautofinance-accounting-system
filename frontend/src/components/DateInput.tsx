@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface DateInputProps {
   value: string; // ISO format (YYYY-MM-DD)
@@ -19,6 +19,7 @@ export default function DateInput({
 }: DateInputProps) {
   // Display value in mm/dd/yyyy format
   const [displayValue, setDisplayValue] = useState('');
+  const datePickerRef = useRef<HTMLInputElement>(null);
 
   // Convert ISO format to mm/dd/yyyy for display
   useEffect(() => {
@@ -49,7 +50,7 @@ export default function DateInput({
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target.value;
     const formatted = formatAsYouType(input);
     setDisplayValue(formatted);
@@ -73,15 +74,63 @@ export default function DateInput({
     }
   };
 
+  const handleDatePickerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const isoDate = e.target.value;
+    if (isoDate) {
+      onChange(isoDate);
+    }
+  };
+
+  const openDatePicker = () => {
+    if (datePickerRef.current && !disabled) {
+      datePickerRef.current.showPicker?.();
+    }
+  };
+
   return (
-    <input
-      type="text"
-      value={displayValue}
-      onChange={handleChange}
-      placeholder={placeholder}
-      className={className}
-      disabled={disabled}
-      maxLength={10}
-    />
+    <div className="relative">
+      <input
+        type="text"
+        value={displayValue}
+        onChange={handleTextChange}
+        placeholder={placeholder}
+        className={className}
+        disabled={disabled}
+        maxLength={10}
+      />
+      {/* Hidden native date picker */}
+      <input
+        ref={datePickerRef}
+        type="date"
+        value={value}
+        onChange={handleDatePickerChange}
+        className="absolute inset-0 opacity-0 cursor-pointer"
+        disabled={disabled}
+        tabIndex={-1}
+      />
+      {/* Calendar icon */}
+      <button
+        type="button"
+        onClick={openDatePicker}
+        disabled={disabled}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+        tabIndex={-1}
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.5}
+          stroke="currentColor"
+          className="w-5 h-5"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"
+          />
+        </svg>
+      </button>
+    </div>
   );
 }
