@@ -104,7 +104,7 @@ export default function DateInput({
         type="date"
         value={value}
         onChange={handleDatePickerChange}
-        className="absolute inset-0 opacity-0 cursor-pointer"
+        className="absolute inset-0 opacity-0 cursor-pointer pointer-events-none"
         disabled={disabled}
         tabIndex={-1}
       />

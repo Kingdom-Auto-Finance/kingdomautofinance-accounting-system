@@ -4,8 +4,10 @@ Preserves all business logic while making it accessible via API.
 """
 import sys
 import os
+import io
 from pathlib import Path
 from typing import Dict, Any
+from contextlib import redirect_stdout
 
 # Add parent src directory to path to import existing modules
 project_root = Path(__file__).parent.parent.parent.parent
@@ -130,20 +132,25 @@ def generate_report(report_type: str, start_date: str = None, end_date: str = No
         CSV content as string
     """
     try:
-        if report_type == "summary":
-            csv_path = reporting.generate_summary_totals_report(start_date, end_date)
-        elif report_type == "day":
-            csv_path = reporting.generate_day_breakdown_report(start_date, end_date)
-        elif report_type == "loan":
-            csv_path = reporting.generate_loan_breakdown_report(start_date, end_date)
-        elif report_type == "full":
-            csv_path = reporting.generate_full_breakdown_report(start_date, end_date)
-        else:
-            raise ValueError(f"Invalid report type: {report_type}")
+        # Capture stdout since reporting.py prints CSV directly
+        csv_buffer = io.StringIO()
 
-        # Read the CSV file
-        with open(csv_path, 'r') as f:
-            csv_content = f.read()
+        with redirect_stdout(csv_buffer):
+            if report_type == "summary":
+                reporting.generate_period_report(start_date, end_date)
+            elif report_type == "day":
+                reporting.generate_day_breakdown(start_date, end_date, all_dates=False)
+            elif report_type == "loan":
+                reporting.generate_loan_breakdown(start_date, end_date, all_dates=False)
+            elif report_type == "full":
+                reporting.generate_full_breakdown(start_date, end_date, all_dates=False)
+            else:
+                raise ValueError(f"Invalid report type: {report_type}")
+
+        csv_content = csv_buffer.getvalue()
+
+        if not csv_content:
+            raise ValueError(f"No data generated for report type: {report_type}")
 
         return csv_content
 
