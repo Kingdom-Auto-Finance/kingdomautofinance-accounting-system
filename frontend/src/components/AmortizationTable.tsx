@@ -115,7 +115,7 @@ export default function AmortizationTable({
     row: ScheduleRow,
     col: typeof visibleColumnDefs[0]
   ) => {
-    const value = row[col.key];
+    const value = row[col.key as keyof ScheduleRow];
 
     if (value === null || value === undefined) {
       return <span className="text-gray-400">—</span>;
