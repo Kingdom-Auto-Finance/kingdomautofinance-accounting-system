@@ -87,48 +87,48 @@ export default function ReportsPage() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Reports</h1>
-          <p className="mt-2 text-sm text-gray-600">
+          <h1 className="text-3xl font-bold text-foreground">Reports</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
             Generate and download detailed payment reports
           </p>
         </div>
 
         {/* Report Configuration */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        <div className="bg-card p-6 rounded-lg shadow border border-border">
+          <h2 className="text-lg font-semibold text-foreground mb-4">
             Configure Report
           </h2>
 
           {/* Date Range */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-foreground mb-2">
                 Start Date
               </label>
               <DateInput
                 value={startDate}
                 onChange={setStartDate}
                 placeholder="mm/dd/yyyy"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-card text-foreground"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-foreground mb-2">
                 End Date
               </label>
               <DateInput
                 value={endDate}
                 onChange={setEndDate}
                 placeholder="mm/dd/yyyy"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-card text-foreground"
               />
             </div>
           </div>
 
           {/* Report Type Selection */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
+            <label className="block text-sm font-medium text-foreground mb-3">
               Report Type
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -138,15 +138,15 @@ export default function ReportsPage() {
                   onClick={() => setReportType(type.value as ReportType)}
                   className={`p-4 border-2 rounded-lg text-left transition-all ${
                     reportType === type.value
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300'
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-950'
+                      : 'border-border hover:border-foreground/30'
                   }`}
                 >
                   <div className="flex items-start">
                     <span className="text-2xl mr-3">{type.icon}</span>
                     <div>
-                      <h3 className="font-semibold text-gray-900">{type.label}</h3>
-                      <p className="text-sm text-gray-600 mt-1">{type.description}</p>
+                      <h3 className="font-semibold text-foreground">{type.label}</h3>
+                      <p className="text-sm text-muted-foreground mt-1">{type.description}</p>
                     </div>
                   </div>
                 </button>

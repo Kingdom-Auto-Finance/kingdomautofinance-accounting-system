@@ -103,10 +103,10 @@ export default function PaymentsPage() {
     if (!job) return null;
 
     const statusColors = {
-      queued: 'bg-gray-100 text-gray-800',
-      running: 'bg-blue-100 text-blue-800',
-      completed: 'bg-green-100 text-green-800',
-      failed: 'bg-red-100 text-red-800',
+      queued: 'bg-muted text-muted-foreground',
+      running: 'bg-info-muted text-info-muted-foreground',
+      completed: 'bg-success-muted text-success-muted-foreground',
+      failed: 'bg-destructive text-destructive-foreground',
     };
 
     const statusIcons = {
@@ -117,12 +117,12 @@ export default function PaymentsPage() {
     };
 
     return (
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
+      <div className="bg-card p-6 rounded-lg shadow border border-border">
+        <h3 className="text-lg font-semibold text-foreground mb-4">{title}</h3>
 
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-gray-700">Status:</span>
+            <span className="text-sm font-medium text-foreground">Status:</span>
             <span
               className={`px-3 py-1 rounded-full text-sm font-medium ${statusColors[job.status]}`}
             >
@@ -133,11 +133,11 @@ export default function PaymentsPage() {
           {job.progress && job.status === 'running' && (
             <>
               <div>
-                <div className="flex justify-between text-sm text-gray-700 mb-2">
+                <div className="flex justify-between text-sm text-foreground mb-2">
                   <span>{job.progress.message}</span>
                   <span>{job.progress.percent || 0}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-3">
+                <div className="w-full bg-muted rounded-full h-3">
                   <div
                     className="bg-blue-600 h-3 rounded-full transition-all duration-300"
                     style={{ width: `${job.progress.percent || 0}%` }}
@@ -159,7 +159,7 @@ export default function PaymentsPage() {
             </div>
           )}
 
-          <p className="text-xs text-gray-500">Job ID: {job.id}</p>
+          <p className="text-xs text-muted-foreground">Job ID: {job.id}</p>
         </div>
       </div>
     );
@@ -170,8 +170,8 @@ export default function PaymentsPage() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Payment Management</h1>
-          <p className="mt-2 text-sm text-gray-600">
+          <h1 className="text-3xl font-bold text-foreground">Payment Management</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
             Fetch payments from Google Sheets and process them
           </p>
         </div>
@@ -185,13 +185,13 @@ export default function PaymentsPage() {
 
         {/* Action Buttons */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-lg shadow">
+          <div className="bg-card p-6 rounded-lg shadow border border-border">
             <div className="flex items-start justify-between mb-4">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">
+                <h3 className="text-lg font-semibold text-foreground">
                   1️⃣ Fetch Payments
                 </h3>
-                <p className="mt-1 text-sm text-gray-600">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Import new payments from Google Sheets
                 </p>
               </div>
@@ -205,13 +205,13 @@ export default function PaymentsPage() {
             </button>
           </div>
 
-          <div className="bg-white p-6 rounded-lg shadow">
+          <div className="bg-card p-6 rounded-lg shadow border border-border">
             <div className="flex items-start justify-between mb-4">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">
+                <h3 className="text-lg font-semibold text-foreground">
                   2️⃣ Process Payments
                 </h3>
-                <p className="mt-1 text-sm text-gray-600">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Allocate payments to amortization schedules
                 </p>
               </div>

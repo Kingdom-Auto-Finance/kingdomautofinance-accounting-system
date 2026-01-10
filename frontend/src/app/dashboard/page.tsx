@@ -59,40 +59,40 @@ export default function DashboardPage() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-          <p className="mt-2 text-sm text-gray-600">
+          <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
             View summary reports and system overview
           </p>
         </div>
 
         {/* Date Range Selector */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        <div className="bg-card p-6 rounded-lg shadow border border-border">
+          <h2 className="text-lg font-semibold text-card-foreground mb-4">
             Generate Summary Report
           </h2>
 
           <div className="flex gap-4 items-end">
             <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-foreground mb-2">
                 Start Date
               </label>
               <DateInput
                 value={startDate}
                 onChange={setStartDate}
                 placeholder="mm/dd/yyyy"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-card text-foreground"
               />
             </div>
 
             <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-foreground mb-2">
                 End Date
               </label>
               <DateInput
                 value={endDate}
                 onChange={setEndDate}
                 placeholder="mm/dd/yyyy"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-card text-foreground"
               />
             </div>
 
@@ -115,43 +115,43 @@ export default function DashboardPage() {
         {/* Summary Cards */}
         {summary && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-6 rounded-lg shadow">
+            <div className="bg-card p-6 rounded-lg shadow border border-border">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Total Principal</p>
-                  <p className="mt-2 text-3xl font-bold text-gray-900">
+                  <p className="text-sm font-medium text-muted-foreground">Total Principal</p>
+                  <p className="mt-2 text-3xl font-bold text-foreground">
                     ${parseFloat(summary['Total Principal'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
-                <div className="p-3 bg-blue-100 rounded-full">
+                <div className="p-3 bg-info-muted rounded-full">
                   <span className="text-2xl">💵</span>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow">
+            <div className="bg-card p-6 rounded-lg shadow border border-border">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Total Interest</p>
-                  <p className="mt-2 text-3xl font-bold text-gray-900">
+                  <p className="text-sm font-medium text-muted-foreground">Total Interest</p>
+                  <p className="mt-2 text-3xl font-bold text-foreground">
                     ${parseFloat(summary['Total Interest'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
-                <div className="p-3 bg-green-100 rounded-full">
+                <div className="p-3 bg-success-muted rounded-full">
                   <span className="text-2xl">📈</span>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow">
+            <div className="bg-card p-6 rounded-lg shadow border border-border">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Total Late Fees</p>
-                  <p className="mt-2 text-3xl font-bold text-gray-900">
+                  <p className="text-sm font-medium text-muted-foreground">Total Late Fees</p>
+                  <p className="mt-2 text-3xl font-bold text-foreground">
                     ${parseFloat(summary['Total Late Fees'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
-                <div className="p-3 bg-yellow-100 rounded-full">
+                <div className="p-3 bg-warning-muted rounded-full">
                   <span className="text-2xl">⚠️</span>
                 </div>
               </div>
@@ -161,11 +161,11 @@ export default function DashboardPage() {
 
         {/* Download Button */}
         {reportData && (
-          <div className="bg-white p-6 rounded-lg shadow">
+          <div className="bg-card p-6 rounded-lg shadow border border-border">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">Report Ready</h3>
-                <p className="text-sm text-gray-600 mt-1">
+                <h3 className="text-lg font-semibold text-foreground">Report Ready</h3>
+                <p className="text-sm text-muted-foreground mt-1">
                   Summary report for {formatDate(startDate)} to {formatDate(endDate)}
                 </p>
               </div>
@@ -182,11 +182,11 @@ export default function DashboardPage() {
 
         {/* Quick Actions */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-lg shadow">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+          <div className="bg-accent hover:bg-accent/90 p-6 rounded-lg shadow border border-border transition-colors">
+            <h3 className="text-lg font-semibold text-foreground mb-2">
               💰 Process Payments
             </h3>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Process unprocessed payments from your payment log
             </p>
             <a
@@ -197,11 +197,11 @@ export default function DashboardPage() {
             </a>
           </div>
 
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-lg shadow">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+          <div className="bg-accent hover:bg-accent/90 p-6 rounded-lg shadow border border-border transition-colors">
+            <h3 className="text-lg font-semibold text-foreground mb-2">
               ⚙️ System Maintenance
             </h3>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Import schedules, run integrity checks
             </p>
             <a

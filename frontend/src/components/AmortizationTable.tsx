@@ -291,8 +291,8 @@ export default function AmortizationTable({
 
   if (visibleColumnDefs.length === 0) {
     return (
-      <div className="bg-white p-12 rounded-lg shadow text-center">
-        <p className="text-gray-600">
+      <div className="bg-card p-12 rounded-lg shadow text-center border border-border">
+        <p className="text-muted-foreground">
           Please select at least one column to display
         </p>
       </div>
@@ -349,12 +349,12 @@ export default function AmortizationTable({
               ))}
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="bg-card divide-y divide-border">
             {data.length === 0 ? (
               <tr>
                 <td
                   colSpan={visibleColumnDefs.length}
-                  className="px-4 py-12 text-center text-gray-500"
+                  className="px-4 py-12 text-center text-muted-foreground"
                 >
                   No data available
                 </td>
@@ -386,8 +386,8 @@ export default function AmortizationTable({
       </div>
 
       {/* Instructions */}
-      <div className="px-4 py-2 bg-gray-50 border-t border-gray-200">
-        <p className="text-xs text-gray-500 text-center">
+      <div className="px-4 py-2 bg-muted border-t border-border">
+        <p className="text-xs text-muted-foreground text-center">
           💡 Drag column headers to reorder • Drag right edge to resize • Click header to sort
         </p>
       </div>

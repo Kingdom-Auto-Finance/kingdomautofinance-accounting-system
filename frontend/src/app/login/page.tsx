@@ -33,8 +33,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8 bg-white p-10 rounded-xl shadow-2xl">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 dark:from-gray-900 dark:to-gray-800 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md w-full space-y-8 bg-card p-10 rounded-xl shadow-2xl border border-border">
         <div>
           <div className="flex justify-center mb-6">
             <Image
@@ -43,12 +43,13 @@ export default function LoginPage() {
               width={250}
               height={80}
               priority
+              className="dark:brightness-0 dark:invert"
             />
           </div>
-          <h2 className="text-center text-3xl font-bold text-gray-900">
+          <h2 className="text-center text-3xl font-bold text-foreground">
             Kingdom Accounting System
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
+          <p className="mt-2 text-center text-sm text-muted-foreground">
             Sign in to access the system
           </p>
         </div>
@@ -64,7 +65,7 @@ export default function LoginPage() {
               type="password"
               autoComplete="current-password"
               required
-              className="appearance-none relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent sm:text-sm"
+              className="appearance-none relative block w-full px-3 py-3 border border-input bg-card text-foreground placeholder:text-muted-foreground rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent sm:text-sm"
               placeholder="Enter password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -106,7 +107,7 @@ export default function LoginPage() {
           </div>
         </form>
 
-        <div className="text-center text-xs text-gray-500 mt-6">
+        <div className="text-center text-xs text-muted-foreground mt-6">
           v2.0.0 • Built with React + Next.js
         </div>
       </div>
