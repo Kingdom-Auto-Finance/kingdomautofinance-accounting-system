@@ -8,6 +8,7 @@ import { ReactNode, useEffect } from 'react';
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: '📊' },
   { name: 'Payments', href: '/payments', icon: '💰' },
+  { name: 'Amortization', href: '/amortization', icon: '📋' },
   { name: 'Reports', href: '/reports', icon: '📈' },
   { name: 'Maintenance', href: '/maintenance', icon: '⚙️' },
 ];
@@ -80,7 +81,7 @@ export default function Layout({ children }: LayoutProps) {
               Logout
             </button>
             <p className="mt-4 text-xs text-center text-gray-500">
-              v2.0.1
+              v2.0.2
             </p>
           </div>
         </div>
