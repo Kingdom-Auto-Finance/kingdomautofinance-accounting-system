@@ -80,7 +80,7 @@ export default function DashboardPage() {
                 value={startDate}
                 onChange={setStartDate}
                 placeholder="mm/dd/yyyy"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
               />
             </div>
 
@@ -92,7 +92,7 @@ export default function DashboardPage() {
                 value={endDate}
                 onChange={setEndDate}
                 placeholder="mm/dd/yyyy"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
               />
             </div>
 
