@@ -38,8 +38,8 @@ export interface ColumnDefinition {
   description?: string;
 }
 
+// Column definitions in database schema order
 export const COLUMN_DEFINITIONS: ColumnDefinition[] = [
-  // Dates
   {
     key: 'paymentnumber',
     label: 'Payment #',
@@ -57,16 +57,6 @@ export const COLUMN_DEFINITIONS: ColumnDefinition[] = [
     description: 'Scheduled payment due date'
   },
   {
-    key: 'actualpaymentdate',
-    label: 'Payment Date',
-    category: 'dates',
-    isDefault: true,
-    format: 'date',
-    description: 'Actual date payment was received'
-  },
-
-  // Balances
-  {
     key: 'scheduledbalance',
     label: 'Scheduled Balance',
     category: 'balances',
@@ -83,30 +73,28 @@ export const COLUMN_DEFINITIONS: ColumnDefinition[] = [
     description: 'Balance adjusted for payments'
   },
   {
-    key: 'scheduledfinalbalance',
-    label: 'Expected End Balance',
-    category: 'balances',
-    isDefault: false,
-    format: 'currency',
-    description: 'Expected balance after payment'
-  },
-  {
-    key: 'endingbalance',
-    label: 'Ending Balance',
-    category: 'balances',
-    isDefault: true,
-    format: 'currency',
-    description: 'Actual ending balance after payment'
-  },
-
-  // Scheduled amounts
-  {
     key: 'scheduledpayment',
     label: 'Scheduled Payment',
     category: 'scheduled',
     isDefault: true,
     format: 'currency',
     description: 'Expected payment amount'
+  },
+  {
+    key: 'actualpaymentdate',
+    label: 'Actual Payment Date',
+    category: 'dates',
+    isDefault: true,
+    format: 'date',
+    description: 'Actual date payment was received'
+  },
+  {
+    key: 'actualpaymentamount',
+    label: 'Actual Payment Amount',
+    category: 'actual',
+    isDefault: true,
+    format: 'currency',
+    description: 'Actual payment amount received'
   },
   {
     key: 'scheduledprincipal',
@@ -124,16 +112,6 @@ export const COLUMN_DEFINITIONS: ColumnDefinition[] = [
     format: 'currency',
     description: 'Expected interest portion'
   },
-
-  // Actual amounts
-  {
-    key: 'actualpaymentamount',
-    label: 'Actual Payment',
-    category: 'actual',
-    isDefault: true,
-    format: 'currency',
-    description: 'Actual payment amount received'
-  },
   {
     key: 'principalpaid',
     label: 'Principal Paid',
@@ -150,8 +128,6 @@ export const COLUMN_DEFINITIONS: ColumnDefinition[] = [
     format: 'currency',
     description: 'Actual interest portion paid'
   },
-
-  // Fees and credits
   {
     key: 'latefee',
     label: 'Late Fee',
@@ -168,8 +144,22 @@ export const COLUMN_DEFINITIONS: ColumnDefinition[] = [
     format: 'currency',
     description: 'Credits applied to payment'
   },
-
-  // Status
+  {
+    key: 'scheduledfinalbalance',
+    label: 'Scheduled Final Balance',
+    category: 'balances',
+    isDefault: false,
+    format: 'currency',
+    description: 'Expected balance after payment'
+  },
+  {
+    key: 'endingbalance',
+    label: 'Ending Balance',
+    category: 'balances',
+    isDefault: true,
+    format: 'currency',
+    description: 'Actual ending balance after payment'
+  },
   {
     key: 'status',
     label: 'Status',
@@ -204,3 +194,10 @@ export interface PaymentValidation {
   allocationCheck: ValidationResult;
   balanceCheck: ValidationResult;
 }
+
+export interface ColumnOrder {
+  key: string;
+  width?: number; // in pixels, optional
+}
+
+export const DEFAULT_COLUMN_WIDTH = 150; // pixels

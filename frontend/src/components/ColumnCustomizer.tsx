@@ -1,9 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
   COLUMN_DEFINITIONS,
-  COLUMN_CATEGORIES,
   DEFAULT_VISIBLE_COLUMNS,
   type ColumnDefinition,
 } from '@/types/amortization';
@@ -17,148 +16,221 @@ export default function ColumnCustomizer({
   visibleColumns,
   onChange,
 }: ColumnCustomizerProps) {
-  const categorizedColumns = useMemo(() => {
-    const result: Record<string, ColumnDefinition[]> = {};
-    COLUMN_DEFINITIONS.forEach((col) => {
-      if (!result[col.category]) {
-        result[col.category] = [];
+  const [isOpen, setIsOpen] = useState(false);
+  const [tempColumns, setTempColumns] = useState<Set<string>>(visibleColumns);
+
+  // Update temp columns when visibleColumns changes
+  useEffect(() => {
+    setTempColumns(new Set(visibleColumns));
+  }, [visibleColumns]);
+
+  // Close on escape key
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        setIsOpen(false);
+        setTempColumns(new Set(visibleColumns)); // Reset to original
       }
-      result[col.category].push(col);
-    });
-    return result;
-  }, []);
+    };
+
+    if (isOpen) {
+      document.addEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'hidden';
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen, visibleColumns]);
 
   const handleToggleColumn = (columnKey: string) => {
-    const newSet = new Set(visibleColumns);
+    const newSet = new Set(tempColumns);
     if (newSet.has(columnKey)) {
       newSet.delete(columnKey);
     } else {
       newSet.add(columnKey);
     }
-    onChange(newSet);
+    setTempColumns(newSet);
   };
 
-  const handleToggleCategory = (category: string) => {
-    const categoryColumns = categorizedColumns[category];
-    const allSelected = categoryColumns.every((col) =>
-      visibleColumns.has(col.key)
-    );
+  const handleSelectAll = () => {
+    setTempColumns(new Set(COLUMN_DEFINITIONS.map((col) => col.key)));
+  };
 
-    const newSet = new Set(visibleColumns);
-    if (allSelected) {
-      // Deselect all in category
-      categoryColumns.forEach((col) => newSet.delete(col.key));
-    } else {
-      // Select all in category
-      categoryColumns.forEach((col) => newSet.add(col.key));
-    }
-    onChange(newSet);
+  const handleDeselectAll = () => {
+    setTempColumns(new Set());
   };
 
   const handleResetToDefaults = () => {
-    onChange(new Set(DEFAULT_VISIBLE_COLUMNS));
+    setTempColumns(new Set(DEFAULT_VISIBLE_COLUMNS));
   };
 
-  const getCategoryStats = (category: string) => {
-    const categoryColumns = categorizedColumns[category];
-    const selectedCount = categoryColumns.filter((col) =>
-      visibleColumns.has(col.key)
-    ).length;
-    return { selected: selectedCount, total: categoryColumns.length };
+  const handleApply = () => {
+    onChange(new Set(tempColumns));
+    setIsOpen(false);
+  };
+
+  const handleCancel = () => {
+    setTempColumns(new Set(visibleColumns));
+    setIsOpen(false);
   };
 
   return (
-    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-900">
-            Column Selection
-          </h3>
-          <p className="text-xs text-gray-600 mt-1">
-            {visibleColumns.size} of {COLUMN_DEFINITIONS.length} columns
-            selected
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={handleResetToDefaults}
-          className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded hover:bg-blue-100 transition-colors"
+    <>
+      {/* Trigger Button */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+      >
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
         >
-          Reset to Defaults
-        </button>
-      </div>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+          />
+        </svg>
+        Customize Columns
+        <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
+          {visibleColumns.size}
+        </span>
+      </button>
 
-      {/* Categories */}
-      <div className="space-y-3">
-        {COLUMN_CATEGORIES.map((category) => {
-          const stats = getCategoryStats(category.id);
-          const allSelected = stats.selected === stats.total;
+      {/* Modal */}
+      {isOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          {/* Overlay */}
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
+            onClick={handleCancel}
+          />
 
-          return (
-            <div
-              key={category.id}
-              className="border border-gray-200 rounded-lg bg-white"
-            >
-              {/* Category header */}
-              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <span className="text-base">{category.icon}</span>
-                  <span className="text-sm font-medium text-gray-900">
-                    {category.label}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    ({stats.selected}/{stats.total})
+          {/* Modal Content */}
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      Customize Columns
+                    </h3>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Select which columns to display in the table
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleCancel}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <svg
+                      className="w-6 h-6"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="px-6 py-4 max-h-96 overflow-y-auto">
+                {/* Quick Actions */}
+                <div className="flex gap-2 mb-4 pb-4 border-b border-gray-200">
+                  <button
+                    onClick={handleSelectAll}
+                    className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded hover:bg-blue-100"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={handleDeselectAll}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    onClick={handleResetToDefaults}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+                  >
+                    Reset to Defaults
+                  </button>
+                  <div className="flex-1" />
+                  <span className="px-3 py-1.5 text-xs text-gray-600 bg-gray-50 rounded">
+                    {tempColumns.size} of {COLUMN_DEFINITIONS.length} selected
                   </span>
                 </div>
+
+                {/* Column Grid */}
+                <div className="grid grid-cols-2 gap-3">
+                  {COLUMN_DEFINITIONS.map((col) => (
+                    <label
+                      key={col.key}
+                      className="flex items-start gap-2 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={tempColumns.has(col.key)}
+                        onChange={() => handleToggleColumn(col.key)}
+                        className="mt-0.5 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-900">
+                          {col.label}
+                        </div>
+                        {col.description && (
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {col.description}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+
+                {/* Warning */}
+                {tempColumns.size === 0 && (
+                  <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-xs text-yellow-800">
+                      ⚠️ At least one column should be selected to view data
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-gray-200 flex gap-3">
                 <button
-                  type="button"
-                  onClick={() => handleToggleCategory(category.id)}
-                  className="text-xs font-medium text-blue-700 hover:text-blue-800 transition-colors"
+                  onClick={handleCancel}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
-                  {allSelected ? 'Deselect All' : 'Select All'}
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApply}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                >
+                  Apply Changes
                 </button>
               </div>
-
-              {/* Category columns */}
-              <div className="p-3 space-y-2">
-                {categorizedColumns[category.id]?.map((col) => (
-                  <label
-                    key={col.key}
-                    className="flex items-start gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.has(col.key)}
-                      onChange={() => handleToggleColumn(col.key)}
-                      className="mt-0.5 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900">
-                        {col.label}
-                      </div>
-                      {col.description && (
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          {col.description}
-                        </div>
-                      )}
-                    </div>
-                  </label>
-                ))}
-              </div>
             </div>
-          );
-        })}
-      </div>
-
-      {/* Warning if no columns selected */}
-      {visibleColumns.size === 0 && (
-        <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-          <p className="text-xs text-yellow-800">
-            ⚠️ At least one column should be selected to view data
-          </p>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -20,7 +20,9 @@ export default function LoanSelector({
 }: LoanSelectorProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const selectedLoan = useMemo(
     () => loans.find((loan) => loan.loan_id === value),
@@ -38,6 +40,18 @@ export default function LoanSelector({
     );
   }, [loans, searchTerm]);
 
+  // Focus search input when dropdown opens
+  useEffect(() => {
+    if (isOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [isOpen]);
+
+  // Reset highlighted index when filtered loans change
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [filteredLoans]);
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -46,6 +60,7 @@ export default function LoanSelector({
         !dropdownRef.current.contains(event.target as Node)
       ) {
         setIsOpen(false);
+        setSearchTerm('');
       }
     };
 
@@ -59,10 +74,45 @@ export default function LoanSelector({
     setSearchTerm('');
   };
 
-  const handleClear = () => {
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation();
     onChange('');
     setSearchTerm('');
     setIsOpen(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!isOpen) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setIsOpen(true);
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setHighlightedIndex((prev) =>
+          prev < filteredLoans.length - 1 ? prev + 1 : prev
+        );
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (filteredLoans[highlightedIndex]) {
+          handleSelect(filteredLoans[highlightedIndex].loan_id);
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        setIsOpen(false);
+        setSearchTerm('');
+        break;
+    }
   };
 
   const displayText = selectedLoan
@@ -78,8 +128,9 @@ export default function LoanSelector({
         <button
           type="button"
           onClick={() => !loading && setIsOpen(!isOpen)}
+          onKeyDown={handleKeyDown}
           disabled={loading}
-          className={`w-full px-4 py-2 text-left border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
+          className={`w-full px-4 py-2 text-left border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors text-gray-900 ${
             loading ? 'opacity-50 cursor-not-allowed' : 'hover:border-gray-400'
           }`}
         >
@@ -125,30 +176,51 @@ export default function LoanSelector({
         <div className="absolute z-50 w-full mt-2 bg-white border border-gray-300 rounded-lg shadow-lg max-h-96 flex flex-col">
           {/* Search input */}
           <div className="p-3 border-b border-gray-200">
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search loans..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              autoFocus
-            />
+            <div className="relative">
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Type to search loans..."
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-gray-900 placeholder-gray-500"
+              />
+              <svg
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
+            </div>
           </div>
 
           {/* Loan list */}
           <div className="overflow-y-auto">
             {filteredLoans.length === 0 ? (
               <div className="px-4 py-8 text-center text-gray-500 text-sm">
-                No loans found
+                {searchTerm ? 'No matching loans found' : 'No loans available'}
               </div>
             ) : (
-              filteredLoans.map((loan) => (
+              filteredLoans.map((loan, index) => (
                 <button
                   key={loan.loan_id}
                   type="button"
                   onClick={() => handleSelect(loan.loan_id)}
-                  className={`w-full px-4 py-3 text-left hover:bg-blue-50 transition-colors border-b border-gray-100 last:border-b-0 ${
-                    loan.loan_id === value ? 'bg-blue-50' : ''
+                  onMouseEnter={() => setHighlightedIndex(index)}
+                  className={`w-full px-4 py-3 text-left transition-colors border-b border-gray-100 last:border-b-0 ${
+                    index === highlightedIndex
+                      ? 'bg-blue-100'
+                      : loan.loan_id === value
+                        ? 'bg-blue-50'
+                        : 'hover:bg-gray-50'
                   }`}
                 >
                   <div className="font-medium text-gray-900">
@@ -168,10 +240,15 @@ export default function LoanSelector({
             )}
           </div>
 
-          {/* Footer with count */}
+          {/* Footer with count and keyboard hints */}
           {filteredLoans.length > 0 && (
-            <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 text-xs text-gray-600">
-              Showing {filteredLoans.length} of {loans.length} loans
+            <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
+              <span className="text-xs text-gray-600">
+                Showing {filteredLoans.length} of {loans.length} loans
+              </span>
+              <span className="text-xs text-gray-500">
+                Use ↑↓ to navigate, Enter to select
+              </span>
             </div>
           )}
         </div>

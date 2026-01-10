@@ -11,8 +11,10 @@ import { downloadCSV, formatDate, formatCurrency } from '@/lib/utils';
 import {
   COLUMN_DEFINITIONS,
   DEFAULT_VISIBLE_COLUMNS,
+  DEFAULT_COLUMN_WIDTH,
   type Loan,
   type ScheduleRow,
+  type ColumnOrder,
 } from '@/types/amortization';
 
 export default function AmortizationPage() {
@@ -31,6 +33,12 @@ export default function AmortizationPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
     DEFAULT_VISIBLE_COLUMNS
+  );
+  const [columnOrder, setColumnOrder] = useState<ColumnOrder[]>(
+    COLUMN_DEFINITIONS.filter(col => DEFAULT_VISIBLE_COLUMNS.has(col.key)).map(col => ({
+      key: col.key,
+      width: DEFAULT_COLUMN_WIDTH,
+    }))
   );
 
   // Modal
@@ -55,11 +63,20 @@ export default function AmortizationPage() {
   // Load column preferences from localStorage
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('amortization_visible_columns');
-      if (saved) {
-        const parsed = JSON.parse(saved);
+      const savedColumns = localStorage.getItem('amortization_visible_columns');
+      const savedOrder = localStorage.getItem('amortization_column_order');
+
+      if (savedColumns) {
+        const parsed = JSON.parse(savedColumns);
         if (Array.isArray(parsed)) {
           setVisibleColumns(new Set(parsed));
+        }
+      }
+
+      if (savedOrder) {
+        const parsed = JSON.parse(savedOrder);
+        if (Array.isArray(parsed)) {
+          setColumnOrder(parsed);
         }
       }
     } catch (err) {
@@ -76,6 +93,40 @@ export default function AmortizationPage() {
       );
     } catch (err) {
       console.error('Failed to save column preferences:', err);
+    }
+  }, [visibleColumns]);
+
+  // Save column order to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'amortization_column_order',
+        JSON.stringify(columnOrder)
+      );
+    } catch (err) {
+      console.error('Failed to save column order:', err);
+    }
+  }, [columnOrder]);
+
+  // Sync column order when visible columns change
+  useEffect(() => {
+    const currentKeys = new Set(columnOrder.map(c => c.key));
+    const visibleKeys = Array.from(visibleColumns);
+
+    // Add new visible columns that aren't in the order
+    const newColumns = visibleKeys.filter(key => !currentKeys.has(key));
+    if (newColumns.length > 0) {
+      const newOrder = [
+        ...columnOrder.filter(c => visibleColumns.has(c.key)),
+        ...newColumns.map(key => ({ key, width: DEFAULT_COLUMN_WIDTH }))
+      ];
+      setColumnOrder(newOrder);
+    } else {
+      // Remove columns that are no longer visible
+      const filteredOrder = columnOrder.filter(c => visibleColumns.has(c.key));
+      if (filteredOrder.length !== columnOrder.length) {
+        setColumnOrder(filteredOrder);
+      }
     }
   }, [visibleColumns]);
 
@@ -242,8 +293,8 @@ export default function AmortizationPage() {
         )}
 
         {/* Control Panel */}
-        <div className="bg-white p-6 rounded-lg shadow space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white p-6 rounded-lg shadow">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             {/* Loan Selector */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -267,7 +318,7 @@ export default function AmortizationPage() {
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 disabled={!selectedLoanId || loading}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed text-gray-900"
               >
                 <option value="all">All Statuses</option>
                 {availableStatuses.map((status) => (
@@ -277,13 +328,15 @@ export default function AmortizationPage() {
                 ))}
               </select>
             </div>
-          </div>
 
-          {/* Column Customizer */}
-          <ColumnCustomizer
-            visibleColumns={visibleColumns}
-            onChange={setVisibleColumns}
-          />
+            {/* Column Customizer */}
+            <div>
+              <ColumnCustomizer
+                visibleColumns={visibleColumns}
+                onChange={setVisibleColumns}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Action Bar */}
@@ -324,7 +377,8 @@ export default function AmortizationPage() {
           ) : (
             <AmortizationTable
               data={processedData}
-              visibleColumns={visibleColumns}
+              columnOrder={columnOrder}
+              onColumnOrderChange={setColumnOrder}
               sortColumn={sortColumn}
               sortDirection={sortDirection}
               onSort={handleSort}
