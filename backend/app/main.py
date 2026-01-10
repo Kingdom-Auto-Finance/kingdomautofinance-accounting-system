@@ -47,7 +47,7 @@ async def health_check():
 
 
 # Include API routers
-from app.api import payments, reports, amortization, jobs
+from app.api import payments, reports, amortization, jobs, settings as settings_api
 
 app.include_router(
     payments.router,
@@ -71,4 +71,10 @@ app.include_router(
     jobs.router,
     prefix=f"{settings.API_V1_PREFIX}/jobs",
     tags=["jobs"]
+)
+
+app.include_router(
+    settings_api.router,
+    prefix=f"{settings.API_V1_PREFIX}/settings",
+    tags=["settings"]
 )

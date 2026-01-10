@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
 import { amortizationAPI, jobsAPI } from '@/lib/api';
+import { Accordion, AccordionItem } from '@/components/Accordion';
+import { SettingsForm } from '@/components/SettingsForm';
 
 type JobStatus = {
   id: string;
@@ -139,7 +141,7 @@ export default function MaintenancePage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">System Maintenance</h1>
           <p className="mt-2 text-sm text-gray-600">
-            Import amortization schedules and run system checks
+            Configure Google integrations and import amortization schedules
           </p>
         </div>
 
@@ -150,33 +152,62 @@ export default function MaintenancePage() {
           </div>
         )}
 
-        {/* Import Amortization Schedules */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex-1">
-              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <span>📥</span>
-                Import Amortization Schedules
-              </h3>
-              <p className="mt-2 text-sm text-gray-600">
+        {/* Configuration and Import Section */}
+        <Accordion>
+          {/* Section 1: Import Amortization Schedules */}
+          <AccordionItem
+            title="Import Amortization Schedules"
+            icon="📥"
+            defaultOpen={true}
+          >
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
                 Scan Google Drive folder and import loan amortization schedules into database tables.
               </p>
-              <ul className="mt-3 text-sm text-gray-600 space-y-1 list-disc list-inside">
+              <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
                 <li>Creates <code className="bg-gray-100 px-1 py-0.5 rounded">schedule_&#123;loan_id&#125;</code> tables</li>
                 <li>Imports schedule data from Google Sheets</li>
                 <li>Skips tables that already have data</li>
               </ul>
-            </div>
-          </div>
 
-          <button
-            onClick={handleImportSchedules}
-            disabled={loading || importJob?.status === 'running'}
-            className="w-full px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+              <button
+                onClick={handleImportSchedules}
+                disabled={loading || importJob?.status === 'running'}
+                className="w-full px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+              >
+                {importJob?.status === 'running' ? 'Importing...' : 'Import Schedules from Google Drive'}
+              </button>
+            </div>
+          </AccordionItem>
+
+          {/* Section 2: Google Payments Sheet Configuration */}
+          <AccordionItem
+            title="Google Payments Sheet Configuration"
+            icon="📊"
           >
-            {importJob?.status === 'running' ? 'Importing...' : 'Import Schedules from Google Drive'}
-          </button>
-        </div>
+            <SettingsForm
+              settingKey="SOURCE_PAYMENTS_SHEET_ID"
+              label="Source Payments Sheet"
+              description="Google Sheet containing payment data that will be imported into the system"
+              placeholder="https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit or just the ID"
+              type="sheet"
+            />
+          </AccordionItem>
+
+          {/* Section 3: Google Drive Folder Configuration */}
+          <AccordionItem
+            title="Google Drive Folder Configuration"
+            icon="📁"
+          >
+            <SettingsForm
+              settingKey="AMORTIZATION_SCHEDULES_FOLDER_ID"
+              label="Amortization Schedules Folder"
+              description="Google Drive folder containing individual loan amortization schedule spreadsheets"
+              placeholder="https://drive.google.com/drive/folders/YOUR_FOLDER_ID or just the ID"
+              type="folder"
+            />
+          </AccordionItem>
+        </Accordion>
 
         {/* Job Status */}
         {renderJobStatus()}

@@ -80,7 +80,7 @@ export default function Layout({ children }: LayoutProps) {
               Logout
             </button>
             <p className="mt-4 text-xs text-center text-gray-500">
-              v2.0.0 • React + Next.js
+              v2.0.1
             </p>
           </div>
         </div>

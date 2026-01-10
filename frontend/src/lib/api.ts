@@ -118,6 +118,33 @@ export const jobsAPI = {
     ),
 };
 
+// Settings API
+export const settingsAPI = {
+  getAll: (category?: string) =>
+    fetchAPI<{ data: any[]; count: number }>(
+      `/settings${category ? `?category=${category}` : ''}`
+    ),
+
+  get: (key: string) =>
+    fetchAPI<{ key: string; value: string; description: string; category: string }>(
+      `/settings/${key}`
+    ),
+
+  update: (key: string, value: string, type?: 'sheet' | 'folder') =>
+    fetchAPI<{ key: string; value: string; message: string }>(
+      `/settings/${key}`,
+      {
+        method: 'PUT',
+        body: { value, type },
+      }
+    ),
+
+  clearCache: () =>
+    fetchAPI<{ message: string }>('/settings/cache/clear', {
+      method: 'POST',
+    }),
+};
+
 // Health check
 export const healthCheck = () =>
   fetch(`${API_URL}/health`).then(res => res.json());
@@ -128,5 +155,6 @@ export default {
   reportsAPI,
   amortizationAPI,
   jobsAPI,
+  settingsAPI,
   healthCheck,
 };
