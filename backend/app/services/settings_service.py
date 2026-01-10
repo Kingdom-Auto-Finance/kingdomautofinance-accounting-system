@@ -13,7 +13,7 @@ import re
 import time
 from typing import Optional, Dict
 from supabase import Client
-from app.core.supabase import get_supabase_client
+from app.db.supabase_client import get_supabase_client
 
 
 class SettingsManager:
