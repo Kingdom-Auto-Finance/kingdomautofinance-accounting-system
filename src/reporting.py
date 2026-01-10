@@ -56,40 +56,45 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
     # 3) Query each loan schedule table
     rows = []
     for loan_id in loan_ids:
-        table_name = f"schedule_{loan_id}"
-        table = supabase.from_(table_name)
-        query = table.select(
-            "actualpaymentdate",
-            "principalpaid",
-            "interestpaid",
-            "latefee"
-        )
-
-        if not all_dates:
-            if not start_date or not end_date:
-                raise ValueError("start_date and end_date must be provided when --all is not set")
-            query = (
-                query
-                    .gte("actualpaymentdate", f"{start_date}T00:00:00Z")
-                    .lte("actualpaymentdate", f"{end_date}T23:59:59Z")
+        try:
+            table_name = f"schedule_{loan_id}"
+            table = supabase.from_(table_name)
+            query = table.select(
+                "actualpaymentdate",
+                "principalpaid",
+                "interestpaid",
+                "latefee"
             )
 
-        resp_sched = query.execute()
-        data = resp_sched.data or []
-        for r in data:
-            raw_date = r.get("actualpaymentdate")
-            if raw_date is None:
-                continue
-            payment_date = datetime.fromisoformat(raw_date.rstrip("Z")).date()
-            # Format date as mm/dd/yyyy for CSV export
-            formatted_date = payment_date.strftime("%m/%d/%Y")
-            rows.append({
-                "loan_id": loan_id,
-                "payment_date": formatted_date,
-                "principal_amount": float(r.get("principalpaid", 0.0)),
-                "interest_amount": float(r.get("interestpaid", 0.0)),
-                "fee_amount": float(r.get("latefee", 0.0)),
-            })
+            if not all_dates:
+                if not start_date or not end_date:
+                    raise ValueError("start_date and end_date must be provided when --all is not set")
+                query = (
+                    query
+                        .gte("actualpaymentdate", f"{start_date}T00:00:00Z")
+                        .lte("actualpaymentdate", f"{end_date}T23:59:59Z")
+                )
+
+            resp_sched = query.execute()
+            data = resp_sched.data or []
+            for r in data:
+                raw_date = r.get("actualpaymentdate")
+                if raw_date is None:
+                    continue
+                payment_date = datetime.fromisoformat(raw_date.rstrip("Z")).date()
+                # Format date as mm/dd/yyyy for CSV export
+                formatted_date = payment_date.strftime("%m/%d/%Y")
+                rows.append({
+                    "loan_id": loan_id,
+                    "payment_date": formatted_date,
+                    "principal_amount": float(r.get("principalpaid", 0.0)),
+                    "interest_amount": float(r.get("interestpaid", 0.0)),
+                    "fee_amount": float(r.get("latefee", 0.0)),
+                })
+        except Exception as e:
+            logger.warning(f"Failed to query schedule for loan_id '{loan_id}': {str(e)}")
+            # Continue with other loans instead of failing completely
+            continue
 
     # 4) Build DataFrame
     df = pd.DataFrame(rows)
