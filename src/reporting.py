@@ -4,7 +4,6 @@ import logging
 
 import config
 from supabase import create_client
-from google.cloud import secretmanager
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +12,13 @@ LOANS_TABLE = getattr(config, "LOANS_TABLE", "loans")
 
 import os
 def get_supabase_key():
-    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not key:
+        raise ValueError(
+            "SUPABASE_SERVICE_ROLE_KEY environment variable is not set. "
+            "Please configure this in your environment."
+        )
+    return key
 
 def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = False) -> pd.DataFrame:
     """
@@ -28,17 +33,25 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
     """
 
     # 1) Connect to Supabase
-    url = config.SUPABASE_URL
-    key = get_supabase_key()
-    supabase = create_client(url, key)
+    try:
+        url = config.SUPABASE_URL
+        key = get_supabase_key()
+        supabase = create_client(url, key)
+    except Exception as e:
+        logger.error(f"Failed to connect to Supabase: {str(e)}")
+        raise
 
     # 2) Discover loan IDs from the loans table
-    resp = supabase.from_(LOANS_TABLE).select("loan_id").execute()
-    loan_rows = resp.data or []
-    loan_ids = [r["loan_id"] for r in loan_rows]
-    if not loan_ids:
-        logger.error(f"No loan IDs found in Supabase table '{LOANS_TABLE}'.")
-        return pd.DataFrame()
+    try:
+        resp = supabase.from_(LOANS_TABLE).select("loan_id").execute()
+        loan_rows = resp.data or []
+        loan_ids = [r["loan_id"] for r in loan_rows]
+        if not loan_ids:
+            logger.error(f"No loan IDs found in Supabase table '{LOANS_TABLE}'.")
+            return pd.DataFrame()
+    except Exception as e:
+        logger.error(f"Failed to query loans table '{LOANS_TABLE}': {str(e)}")
+        raise
 
     # 3) Query each loan schedule table
     rows = []

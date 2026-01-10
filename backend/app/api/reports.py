@@ -4,8 +4,10 @@ Reporting API endpoints.
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 from typing import Optional
+import logging
 from app.services.payment_service import generate_report
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -37,6 +39,7 @@ async def get_summary_report(request: ReportRequest):
         )
 
     except Exception as e:
+        logger.error(f"Report generation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -64,6 +67,7 @@ async def get_day_breakdown_report(request: ReportRequest):
         )
 
     except Exception as e:
+        logger.error(f"Report generation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -91,6 +95,7 @@ async def get_loan_breakdown_report(request: ReportRequest):
         )
 
     except Exception as e:
+        logger.error(f"Report generation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -119,4 +124,5 @@ async def get_full_breakdown_report(request: ReportRequest):
         )
 
     except Exception as e:
+        logger.error(f"Report generation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
