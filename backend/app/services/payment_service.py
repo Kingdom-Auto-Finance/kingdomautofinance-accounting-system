@@ -69,11 +69,11 @@ def fetch_payments_job(job_id: str, mode: str = "all", days: int = None, start_d
 
     try:
         if mode == "all":
-            result = payment_fetcher.fetch_and_insert_all_payments()
+            result = payment_fetcher.fetch_and_populate_payments(fetch_all=True)
         elif mode == "range" and start_date and end_date:
-            result = payment_fetcher.fetch_and_insert_date_range(start_date, end_date)
+            result = payment_fetcher.fetch_and_populate_payments(start_date_str=start_date, end_date_str=end_date)
         elif mode == "recent" and days:
-            result = payment_fetcher.fetch_and_insert_recent(days)
+            result = payment_fetcher.fetch_and_populate_payments(fetch_recent_days=days)
         else:
             raise ValueError(f"Invalid fetch mode or missing parameters: {mode}")
 
