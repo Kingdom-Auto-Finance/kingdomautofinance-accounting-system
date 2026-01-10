@@ -67,8 +67,8 @@ export function SettingsForm({ settingKey, label, description, placeholder, type
     return (
       <div className="space-y-4">
         <div className="animate-pulse">
-          <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
-          <div className="h-10 bg-gray-200 rounded"></div>
+          <div className="h-4 bg-muted rounded w-1/4 mb-2"></div>
+          <div className="h-10 bg-muted rounded"></div>
         </div>
       </div>
     );
@@ -77,31 +77,31 @@ export function SettingsForm({ settingKey, label, description, placeholder, type
   return (
     <div className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
+        <label className="block text-sm font-medium text-card-foreground mb-2">
           {label}
         </label>
-        <p className="text-sm text-gray-600 mb-3">{description}</p>
+        <p className="text-sm text-muted-foreground mb-3">{description}</p>
         <input
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={placeholder}
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-900 bg-white"
+          className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-foreground bg-card"
           disabled={loading}
         />
-        <p className="mt-2 text-xs text-gray-500">
+        <p className="mt-2 text-xs text-muted-foreground">
           Accepts full Google URL or direct ID
         </p>
       </div>
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
+        <div className="p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-800 dark:text-red-200">
           {error}
         </div>
       )}
 
       {success && (
-        <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+        <div className="p-3 bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-800 dark:text-green-200">
           Settings updated successfully! Changes will take effect on the next import operation.
         </div>
       )}
@@ -115,7 +115,7 @@ export function SettingsForm({ settingKey, label, description, placeholder, type
       </button>
 
       {hasChanges && !loading && (
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted-foreground">
           You have unsaved changes
         </p>
       )}

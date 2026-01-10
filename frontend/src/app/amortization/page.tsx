@@ -264,10 +264,10 @@ export default function AmortizationPage() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">
+          <h1 className="text-3xl font-bold text-foreground">
             Amortization Schedule Viewer
           </h1>
-          <p className="mt-2 text-sm text-gray-600">
+          <p className="mt-2 text-sm text-muted-foreground">
             View and analyze loan amortization schedules with detailed payment
             breakdowns
           </p>
@@ -275,16 +275,16 @@ export default function AmortizationPage() {
 
         {/* Error Alert */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4">
             <div className="flex items-start gap-3">
-              <span className="text-red-600 text-xl">⚠️</span>
+              <span className="text-red-600 dark:text-red-400 text-xl">⚠️</span>
               <div className="flex-1">
-                <h3 className="text-sm font-semibold text-red-800">Error</h3>
-                <p className="text-sm text-red-700 mt-1">{error}</p>
+                <h3 className="text-sm font-semibold text-red-800 dark:text-red-200">Error</h3>
+                <p className="text-sm text-red-700 dark:text-red-300 mt-1">{error}</p>
               </div>
               <button
                 onClick={() => setError(null)}
-                className="text-red-400 hover:text-red-600"
+                className="text-red-400 hover:text-red-600 dark:hover:text-red-300"
               >
                 ✕
               </button>
@@ -293,11 +293,11 @@ export default function AmortizationPage() {
         )}
 
         {/* Control Panel */}
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="bg-card p-6 rounded-lg shadow">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             {/* Loan Selector */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-card-foreground mb-2">
                 Select Loan
               </label>
               <LoanSelector
@@ -311,14 +311,14 @@ export default function AmortizationPage() {
 
             {/* Status Filter */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-card-foreground mb-2">
                 Payment Status
               </label>
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 disabled={!selectedLoanId || loading}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed text-gray-900"
+                className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed text-foreground bg-card"
               >
                 <option value="all">All Statuses</option>
                 {availableStatuses.map((status) => (
@@ -342,7 +342,7 @@ export default function AmortizationPage() {
         {/* Action Bar */}
         {scheduleData.length > 0 && (
           <div className="flex justify-between items-center">
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-muted-foreground">
               Showing {processedData.length} of {scheduleData.length} payments
               {statusFilter !== 'all' && ` (filtered by ${statusFilter})`}
             </div>
@@ -360,17 +360,17 @@ export default function AmortizationPage() {
         {/* Data Table or Loading/Empty State */}
         {selectedLoanId ? (
           loading ? (
-            <div className="bg-white p-12 rounded-lg shadow text-center">
+            <div className="bg-card p-12 rounded-lg shadow text-center">
               <div className="animate-spin text-4xl mb-4">⚙️</div>
-              <p className="text-gray-600">Loading schedule data...</p>
+              <p className="text-muted-foreground">Loading schedule data...</p>
             </div>
           ) : scheduleData.length === 0 ? (
-            <div className="bg-white p-12 rounded-lg shadow text-center">
+            <div className="bg-card p-12 rounded-lg shadow text-center">
               <div className="text-4xl mb-4">📭</div>
-              <p className="text-gray-600 font-medium">
+              <p className="text-muted-foreground font-medium">
                 No schedule data found
               </p>
-              <p className="text-gray-500 text-sm mt-2">
+              <p className="text-muted-foreground text-sm mt-2">
                 This loan may not have an amortization schedule imported yet.
               </p>
             </div>
@@ -386,12 +386,12 @@ export default function AmortizationPage() {
             />
           )
         ) : (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-12 text-center">
+          <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-12 text-center">
             <div className="text-4xl mb-4">👆</div>
-            <p className="text-blue-800 font-medium">
+            <p className="text-blue-800 dark:text-blue-200 font-medium">
               Select a loan above to view its amortization schedule
             </p>
-            <p className="text-blue-600 text-sm mt-2">
+            <p className="text-blue-600 dark:text-blue-300 text-sm mt-2">
               {loans.length} loan{loans.length !== 1 ? 's' : ''} available
             </p>
           </div>
@@ -408,30 +408,30 @@ export default function AmortizationPage() {
 
         {/* Legend */}
         {scheduleData.length > 0 && (
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+          <div className="bg-card p-6 rounded-lg shadow">
+            <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <span>📖</span>
               Visual Indicators
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <div className="flex items-center gap-2">
-                <div className="w-4 h-4 bg-yellow-50 border border-yellow-200 rounded"></div>
-                <span className="text-gray-700">Paid Late</span>
+                <div className="w-4 h-4 bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded"></div>
+                <span className="text-card-foreground">Paid Late</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-4 h-4 bg-orange-50 border border-orange-200 rounded"></div>
-                <span className="text-gray-700">Partially Paid</span>
+                <div className="w-4 h-4 bg-orange-50 dark:bg-orange-950 border border-orange-200 dark:border-orange-800 rounded"></div>
+                <span className="text-card-foreground">Partially Paid</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-4 h-4 bg-red-100 border border-red-200 rounded"></div>
-                <span className="text-gray-700">Amount Discrepancy</span>
+                <div className="w-4 h-4 bg-red-100 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded"></div>
+                <span className="text-card-foreground">Amount Discrepancy</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 border-l-4 border-l-red-500"></div>
-                <span className="text-gray-700">Balance Mismatch</span>
+                <span className="text-card-foreground">Balance Mismatch</span>
               </div>
             </div>
-            <p className="text-xs text-gray-500 mt-3">
+            <p className="text-xs text-muted-foreground mt-3">
               💡 Click any row to view detailed calculation breakdown and
               validation checks
             </p>

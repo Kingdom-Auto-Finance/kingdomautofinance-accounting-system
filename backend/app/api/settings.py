@@ -35,7 +35,8 @@ class MessageResponse(BaseModel):
 # Valid setting keys (whitelist)
 VALID_SETTING_KEYS = {
     "SOURCE_PAYMENTS_SHEET_ID",
-    "AMORTIZATION_SCHEDULES_FOLDER_ID"
+    "AMORTIZATION_SCHEDULES_FOLDER_ID",
+    "THEME_PREFERENCE"
 }
 
 
@@ -121,6 +122,24 @@ async def update_setting(key: str, request: UpdateSettingRequest):
         )
 
     try:
+        # Special handling for THEME_PREFERENCE
+        if key == "THEME_PREFERENCE":
+            # Validate theme value
+            if request.value not in ["light", "dark"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid theme value: {request.value}. Must be 'light' or 'dark'"
+                )
+
+            # Update setting directly (no Google validation needed)
+            result = settings_manager.set_setting(key, request.value)
+            settings_manager.clear_cache()
+
+            return {
+                **result,
+                "message": "Theme preference updated successfully"
+            }
+
         # Determine type from key if not provided
         if request.type:
             setting_type = request.type

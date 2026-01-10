@@ -13,19 +13,19 @@ export function AccordionItem({ title, icon, defaultOpen = false, children }: Ac
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
+    <div className="border border-border rounded-lg overflow-hidden">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-6 py-4 flex items-center justify-between bg-white hover:bg-gray-50 transition-colors"
+        className="w-full px-6 py-4 flex items-center justify-between bg-card hover:bg-muted transition-colors"
         aria-expanded={isOpen}
         type="button"
       >
         <div className="flex items-center gap-3">
           {icon && <span className="text-xl">{icon}</span>}
-          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
         </div>
         <svg
-          className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -40,7 +40,7 @@ export function AccordionItem({ title, icon, defaultOpen = false, children }: Ac
           isOpen ? 'max-h-[2000px]' : 'max-h-0'
         }`}
       >
-        <div className="p-6 bg-gray-50 border-t border-gray-200">
+        <div className="p-6 bg-muted border-t border-border">
           {children}
         </div>
       </div>

@@ -35,18 +35,19 @@ export default function Layout({ children }: LayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-background">
       {/* Sidebar */}
-      <div className="fixed inset-y-0 left-0 w-64 bg-white shadow-lg">
+      <div className="fixed inset-y-0 left-0 w-64 bg-card shadow-lg border-r border-border">
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center justify-center h-20 border-b">
+          <div className="flex items-center justify-center h-20 border-b border-border">
             <Image
               src="https://kingdomautofinance.com/wp-content/uploads/2021/09/Kingdom-Auto-Finance-Logo-Blue_1@4x.png"
               alt="Kingdom Auto Finance"
               width={180}
               height={60}
               priority
+              className="dark:brightness-0 dark:invert"
             />
           </div>
 
@@ -60,8 +61,8 @@ export default function Layout({ children }: LayoutProps) {
                   href={item.href}
                   className={`flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
                     isActive
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-700 hover:bg-gray-50'
+                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-200'
+                      : 'text-card-foreground hover:bg-muted'
                   }`}
                 >
                   <span className="mr-3 text-lg">{item.icon}</span>
@@ -72,16 +73,16 @@ export default function Layout({ children }: LayoutProps) {
           </nav>
 
           {/* Footer */}
-          <div className="p-4 border-t">
+          <div className="p-4 border-t border-border">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+              className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 dark:bg-red-950 dark:text-red-200 dark:hover:bg-red-900 transition-colors"
             >
               <span className="mr-2">🚪</span>
               Logout
             </button>
-            <p className="mt-4 text-xs text-center text-gray-500">
-              v2.0.2
+            <p className="mt-4 text-xs text-center text-muted-foreground">
+              v2.1.1
             </p>
           </div>
         </div>

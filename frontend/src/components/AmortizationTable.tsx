@@ -68,17 +68,18 @@ export default function AmortizationTable({
   const getRowClassName = (row: ScheduleRow) => {
     const classes = [
       'border-b',
-      'hover:bg-gray-50',
+      'border-border',
+      'hover:bg-muted/50',
       'cursor-pointer',
       'transition-colors',
     ];
 
     if (row.status === 'Paid Late') {
-      classes.push('bg-yellow-50');
+      classes.push('bg-yellow-50', 'dark:bg-yellow-950/30');
     }
 
     if (row.status === 'Partially Paid') {
-      classes.push('bg-orange-50');
+      classes.push('bg-orange-50', 'dark:bg-orange-950/30');
     }
 
     const discrepancies = calculateDiscrepancies(row);
@@ -86,26 +87,26 @@ export default function AmortizationTable({
       discrepancies.hasBalanceDiscrepancy ||
       discrepancies.hasAllocationDiscrepancy
     ) {
-      classes.push('border-l-4', 'border-l-red-500');
+      classes.push('border-l-4', 'border-l-red-500', 'dark:border-l-red-600');
     }
 
     return classes.join(' ');
   };
 
   const getCellClassName = (row: ScheduleRow, columnKey: keyof ScheduleRow) => {
-    const classes = ['px-4', 'py-3', 'text-sm', 'text-gray-900'];
+    const classes = ['px-4', 'py-3', 'text-sm', 'text-foreground'];
 
     const discrepancies = calculateDiscrepancies(row);
 
     if (columnKey === 'endingbalance' && discrepancies.hasBalanceDiscrepancy) {
-      classes.push('bg-red-100', 'font-semibold', 'text-red-900');
+      classes.push('bg-red-100', 'dark:bg-red-900', 'font-semibold', 'text-red-900', 'dark:text-red-200');
     }
 
     if (
       columnKey === 'actualpaymentamount' &&
       discrepancies.hasPaymentDiscrepancy
     ) {
-      classes.push('bg-red-100', 'font-semibold', 'text-red-900');
+      classes.push('bg-red-100', 'dark:bg-red-900', 'font-semibold', 'text-red-900', 'dark:text-red-200');
     }
 
     return classes.join(' ');
@@ -118,7 +119,7 @@ export default function AmortizationTable({
     const value = row[col.key as keyof ScheduleRow];
 
     if (value === null || value === undefined) {
-      return <span className="text-gray-400">—</span>;
+      return <span className="text-muted-foreground">—</span>;
     }
 
     switch (col.format) {
@@ -128,7 +129,7 @@ export default function AmortizationTable({
         try {
           return formatDate(value as string);
         } catch {
-          return <span className="text-gray-400">Invalid date</span>;
+          return <span className="text-muted-foreground">Invalid date</span>;
         }
       case 'number':
         return value.toString();
@@ -140,18 +141,18 @@ export default function AmortizationTable({
   };
 
   const getStatusBadge = (status: string) => {
-    let colorClasses = 'bg-gray-100 text-gray-800';
+    let colorClasses = 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200';
 
     if (status === 'Paid') {
-      colorClasses = 'bg-green-100 text-green-800';
+      colorClasses = 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
     } else if (status === 'Paid Late') {
-      colorClasses = 'bg-yellow-100 text-yellow-800';
+      colorClasses = 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
     } else if (status === 'Partially Paid') {
-      colorClasses = 'bg-orange-100 text-orange-800';
+      colorClasses = 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200';
     } else if (status === 'Paid Off' || status === 'Paid Off Late') {
-      colorClasses = 'bg-blue-100 text-blue-800';
+      colorClasses = 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
     } else if (status === 'Pending' || !status) {
-      colorClasses = 'bg-gray-100 text-gray-600';
+      colorClasses = 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
     }
 
     return (
@@ -167,7 +168,7 @@ export default function AmortizationTable({
     if (sortColumn !== columnKey) {
       return (
         <svg
-          className="w-4 h-4 text-gray-400"
+          className="w-4 h-4 text-muted-foreground"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -184,7 +185,7 @@ export default function AmortizationTable({
 
     return sortDirection === 'asc' ? (
       <svg
-        className="w-4 h-4 text-blue-600"
+        className="w-4 h-4 text-blue-600 dark:text-blue-400"
         fill="none"
         stroke="currentColor"
         viewBox="0 0 24 24"
@@ -198,7 +199,7 @@ export default function AmortizationTable({
       </svg>
     ) : (
       <svg
-        className="w-4 h-4 text-blue-600"
+        className="w-4 h-4 text-blue-600 dark:text-blue-400"
         fill="none"
         stroke="currentColor"
         viewBox="0 0 24 24"
@@ -299,10 +300,10 @@ export default function AmortizationTable({
   }
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
+    <div className="bg-card rounded-lg shadow overflow-hidden border border-border">
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+        <table className="min-w-full divide-y divide-border">
+          <thead className="bg-muted">
             <tr>
               {visibleColumnDefs.map((col) => (
                 <th
@@ -313,7 +314,7 @@ export default function AmortizationTable({
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, col.key)}
                   style={{ width: col.width || DEFAULT_COLUMN_WIDTH }}
-                  className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors select-none relative group ${
+                  className={`px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:bg-muted/80 transition-colors select-none relative group ${
                     draggedColumn === col.key ? 'opacity-50' : ''
                   }`}
                   onClick={() => onSort(col.key)}
@@ -321,7 +322,7 @@ export default function AmortizationTable({
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <svg
-                        className="w-3 h-3 text-gray-400 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="w-3 h-3 text-muted-foreground flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -340,7 +341,7 @@ export default function AmortizationTable({
 
                   {/* Resize handle */}
                   <div
-                    className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 group-hover:opacity-100 opacity-0 transition-opacity"
+                    className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 dark:hover:bg-blue-400 group-hover:opacity-100 opacity-0 transition-opacity"
                     onMouseDown={(e) => handleResizeStart(e, col.key)}
                     onClick={(e) => e.stopPropagation()}
                   />
@@ -373,7 +374,7 @@ export default function AmortizationTable({
                   }}
                 >
                   {visibleColumnDefs.map((col) => (
-                    <td key={col.key} className={getCellClassName(row, col.key)}>
+                    <td key={col.key} className={getCellClassName(row, col.key as keyof ScheduleRow)}>
                       {formatCellValue(row, col)}
                     </td>
                   ))}

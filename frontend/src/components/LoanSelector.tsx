@@ -130,11 +130,11 @@ export default function LoanSelector({
           onClick={() => !loading && setIsOpen(!isOpen)}
           onKeyDown={handleKeyDown}
           disabled={loading}
-          className={`w-full px-4 py-2 text-left border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors text-gray-900 ${
-            loading ? 'opacity-50 cursor-not-allowed' : 'hover:border-gray-400'
+          className={`w-full px-4 py-2 text-left border border-input rounded-lg bg-card focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors text-foreground ${
+            loading ? 'opacity-50 cursor-not-allowed' : 'hover:border-muted-foreground'
           }`}
         >
-          <span className={value ? 'text-gray-900' : 'text-gray-500'}>
+          <span className={value ? 'text-foreground' : 'text-muted-foreground'}>
             {loading ? 'Loading loans...' : displayText}
           </span>
         </button>
@@ -144,7 +144,7 @@ export default function LoanSelector({
           <button
             type="button"
             onClick={handleClear}
-            className="absolute right-10 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+            className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
             aria-label="Clear selection"
           >
             ✕
@@ -154,7 +154,7 @@ export default function LoanSelector({
         {/* Dropdown arrow */}
         <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
           <svg
-            className={`w-5 h-5 text-gray-400 transition-transform ${
+            className={`w-5 h-5 text-muted-foreground transition-transform ${
               isOpen ? 'rotate-180' : ''
             }`}
             fill="none"
@@ -173,9 +173,9 @@ export default function LoanSelector({
 
       {/* Dropdown menu */}
       {isOpen && (
-        <div className="absolute z-50 w-full mt-2 bg-white border border-gray-300 rounded-lg shadow-lg max-h-96 flex flex-col">
+        <div className="absolute z-50 w-full mt-2 bg-card border border-border rounded-lg shadow-lg max-h-96 flex flex-col">
           {/* Search input */}
-          <div className="p-3 border-b border-gray-200">
+          <div className="p-3 border-b border-border">
             <div className="relative">
               <input
                 ref={searchInputRef}
@@ -184,10 +184,10 @@ export default function LoanSelector({
                 onChange={(e) => setSearchTerm(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Type to search loans..."
-                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-gray-900 placeholder-gray-500"
+                className="w-full pl-9 pr-3 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-foreground placeholder-muted-foreground bg-card"
               />
               <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -205,7 +205,7 @@ export default function LoanSelector({
           {/* Loan list */}
           <div className="overflow-y-auto">
             {filteredLoans.length === 0 ? (
-              <div className="px-4 py-8 text-center text-gray-500 text-sm">
+              <div className="px-4 py-8 text-center text-muted-foreground text-sm">
                 {searchTerm ? 'No matching loans found' : 'No loans available'}
               </div>
             ) : (
@@ -215,19 +215,19 @@ export default function LoanSelector({
                   type="button"
                   onClick={() => handleSelect(loan.loan_id)}
                   onMouseEnter={() => setHighlightedIndex(index)}
-                  className={`w-full px-4 py-3 text-left transition-colors border-b border-gray-100 last:border-b-0 ${
+                  className={`w-full px-4 py-3 text-left transition-colors border-b border-border last:border-b-0 ${
                     index === highlightedIndex
-                      ? 'bg-blue-100'
+                      ? 'bg-blue-100 dark:bg-blue-950'
                       : loan.loan_id === value
-                        ? 'bg-blue-50'
-                        : 'hover:bg-gray-50'
+                        ? 'bg-blue-50 dark:bg-blue-950/50'
+                        : 'hover:bg-muted'
                   }`}
                 >
-                  <div className="font-medium text-gray-900">
+                  <div className="font-medium text-foreground">
                     {loan.loan_id}
                   </div>
                   {(loan.customer_name || loan.vehicle_info) && (
-                    <div className="text-sm text-gray-600 mt-1">
+                    <div className="text-sm text-muted-foreground mt-1">
                       {loan.customer_name && <span>{loan.customer_name}</span>}
                       {loan.customer_name && loan.vehicle_info && (
                         <span> • </span>
@@ -242,11 +242,11 @@ export default function LoanSelector({
 
           {/* Footer with count and keyboard hints */}
           {filteredLoans.length > 0 && (
-            <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
-              <span className="text-xs text-gray-600">
+            <div className="px-4 py-2 border-t border-border bg-muted flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
                 Showing {filteredLoans.length} of {loans.length} loans
               </span>
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-muted-foreground">
                 Use ↑↓ to navigate, Enter to select
               </span>
             </div>

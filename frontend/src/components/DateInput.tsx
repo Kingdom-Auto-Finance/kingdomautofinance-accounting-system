@@ -113,7 +113,7 @@ export default function DateInput({
         type="button"
         onClick={openDatePicker}
         disabled={disabled}
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground disabled:opacity-50"
         tabIndex={-1}
       >
         <svg

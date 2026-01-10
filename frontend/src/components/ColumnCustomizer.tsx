@@ -82,7 +82,7 @@ export default function ColumnCustomizer({
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-card-foreground bg-card border border-input rounded-lg hover:bg-muted transition-colors"
       >
         <svg
           className="w-4 h-4"
@@ -98,7 +98,7 @@ export default function ColumnCustomizer({
           />
         </svg>
         Customize Columns
-        <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
+        <span className="px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-200 rounded-full">
           {visibleColumns.size}
         </span>
       </button>
@@ -114,21 +114,21 @@ export default function ColumnCustomizer({
 
           {/* Modal Content */}
           <div className="flex min-h-full items-center justify-center p-4">
-            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full">
+            <div className="relative bg-card rounded-lg shadow-xl max-w-2xl w-full">
               {/* Header */}
-              <div className="px-6 py-4 border-b border-gray-200">
+              <div className="px-6 py-4 border-b border-border">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-900">
+                    <h3 className="text-lg font-semibold text-foreground">
                       Customize Columns
                     </h3>
-                    <p className="text-sm text-gray-600 mt-1">
+                    <p className="text-sm text-muted-foreground mt-1">
                       Select which columns to display in the table
                     </p>
                   </div>
                   <button
                     onClick={handleCancel}
-                    className="text-gray-400 hover:text-gray-600"
+                    className="text-muted-foreground hover:text-foreground"
                   >
                     <svg
                       className="w-6 h-6"
@@ -150,27 +150,27 @@ export default function ColumnCustomizer({
               {/* Body */}
               <div className="px-6 py-4 max-h-96 overflow-y-auto">
                 {/* Quick Actions */}
-                <div className="flex gap-2 mb-4 pb-4 border-b border-gray-200">
+                <div className="flex gap-2 mb-4 pb-4 border-b border-border">
                   <button
                     onClick={handleSelectAll}
-                    className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded hover:bg-blue-100"
+                    className="px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-200 bg-blue-50 dark:bg-blue-950 rounded hover:bg-blue-100 dark:hover:bg-blue-900"
                   >
                     Select All
                   </button>
                   <button
                     onClick={handleDeselectAll}
-                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+                    className="px-3 py-1.5 text-xs font-medium text-card-foreground bg-muted rounded hover:bg-muted/80"
                   >
                     Deselect All
                   </button>
                   <button
                     onClick={handleResetToDefaults}
-                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+                    className="px-3 py-1.5 text-xs font-medium text-card-foreground bg-muted rounded hover:bg-muted/80"
                   >
                     Reset to Defaults
                   </button>
                   <div className="flex-1" />
-                  <span className="px-3 py-1.5 text-xs text-gray-600 bg-gray-50 rounded">
+                  <span className="px-3 py-1.5 text-xs text-muted-foreground bg-muted rounded">
                     {tempColumns.size} of {COLUMN_DEFINITIONS.length} selected
                   </span>
                 </div>
@@ -180,20 +180,20 @@ export default function ColumnCustomizer({
                   {COLUMN_DEFINITIONS.map((col) => (
                     <label
                       key={col.key}
-                      className="flex items-start gap-2 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
+                      className="flex items-start gap-2 p-3 rounded-lg border border-border hover:bg-muted cursor-pointer transition-colors"
                     >
                       <input
                         type="checkbox"
                         checked={tempColumns.has(col.key)}
                         onChange={() => handleToggleColumn(col.key)}
-                        className="mt-0.5 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        className="mt-0.5 h-4 w-4 text-blue-600 border-input rounded focus:ring-blue-500"
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-900">
+                        <div className="text-sm font-medium text-foreground">
                           {col.label}
                         </div>
                         {col.description && (
-                          <div className="text-xs text-gray-500 mt-0.5">
+                          <div className="text-xs text-muted-foreground mt-0.5">
                             {col.description}
                           </div>
                         )}
@@ -204,8 +204,8 @@ export default function ColumnCustomizer({
 
                 {/* Warning */}
                 {tempColumns.size === 0 && (
-                  <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <p className="text-xs text-yellow-800">
+                  <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                    <p className="text-xs text-yellow-800 dark:text-yellow-200">
                       ⚠️ At least one column should be selected to view data
                     </p>
                   </div>
@@ -213,10 +213,10 @@ export default function ColumnCustomizer({
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-4 border-t border-gray-200 flex gap-3">
+              <div className="px-6 py-4 border-t border-border flex gap-3">
                 <button
                   onClick={handleCancel}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-card-foreground bg-card border border-input rounded-lg hover:bg-muted"
                 >
                   Cancel
                 </button>

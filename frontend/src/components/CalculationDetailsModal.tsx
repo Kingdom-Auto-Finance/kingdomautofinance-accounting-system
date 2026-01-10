@@ -107,21 +107,21 @@ export default function CalculationDetailsModal({
 
       {/* Modal */}
       <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="relative bg-card rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
           {/* Header */}
-          <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+          <div className="sticky top-0 bg-card border-b border-border px-6 py-4 flex items-center justify-between">
             <div>
-              <h2 id="modal-title" className="text-xl font-bold text-gray-900">
+              <h2 id="modal-title" className="text-xl font-bold text-foreground">
                 Payment Calculation Details
               </h2>
-              <p className="text-sm text-gray-600 mt-1">
+              <p className="text-sm text-muted-foreground mt-1">
                 Payment #{row.paymentnumber} • Due:{' '}
                 {formatDate(row.duedate)}
               </p>
             </div>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
+              className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="Close modal"
             >
               <svg
@@ -143,35 +143,35 @@ export default function CalculationDetailsModal({
           {/* Content */}
           <div className="px-6 py-4 space-y-6">
             {/* Scheduled Amounts Section */}
-            <div className="bg-blue-50 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-blue-900 mb-3 flex items-center gap-2">
+            <div className="bg-blue-50 dark:bg-blue-950 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-3 flex items-center gap-2">
                 <span>📋</span>
                 SCHEDULED AMOUNTS
               </h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-blue-800">Scheduled Payment:</span>
-                  <span className="font-mono font-semibold text-blue-900">
+                  <span className="text-blue-800 dark:text-blue-300">Scheduled Payment:</span>
+                  <span className="font-mono font-semibold text-blue-900 dark:text-blue-200">
                     {formatCurrency(row.scheduledpayment)}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-blue-800">Scheduled Principal:</span>
-                  <span className="font-mono text-blue-900">
+                  <span className="text-blue-800 dark:text-blue-300">Scheduled Principal:</span>
+                  <span className="font-mono text-blue-900 dark:text-blue-200">
                     {formatCurrency(row.scheduledprincipal)}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-blue-800">Scheduled Interest:</span>
-                  <span className="font-mono text-blue-900">
+                  <span className="text-blue-800 dark:text-blue-300">Scheduled Interest:</span>
+                  <span className="font-mono text-blue-900 dark:text-blue-200">
                     {formatCurrency(row.scheduledinterest)}
                   </span>
                 </div>
-                <div className="flex justify-between pt-2 border-t border-blue-200">
-                  <span className="text-blue-800">
+                <div className="flex justify-between pt-2 border-t border-blue-200 dark:border-blue-800">
+                  <span className="text-blue-800 dark:text-blue-300">
                     Scheduled Final Balance:
                   </span>
-                  <span className="font-mono font-semibold text-blue-900">
+                  <span className="font-mono font-semibold text-blue-900 dark:text-blue-200">
                     {formatCurrency(row.scheduledfinalbalance)}
                   </span>
                 </div>
@@ -179,15 +179,15 @@ export default function CalculationDetailsModal({
             </div>
 
             {/* Actual Amounts Section */}
-            <div className="bg-green-50 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-green-900 mb-3 flex items-center gap-2">
+            <div className="bg-green-50 dark:bg-green-950 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-green-900 dark:text-green-200 mb-3 flex items-center gap-2">
                 <span>✅</span>
                 ACTUAL AMOUNTS
               </h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-green-800">Actual Payment:</span>
-                  <span className="font-mono font-semibold text-green-900">
+                  <span className="text-green-800 dark:text-green-300">Actual Payment:</span>
+                  <span className="font-mono font-semibold text-green-900 dark:text-green-200">
                     {row.actualpaymentamount !== null
                       ? formatCurrency(row.actualpaymentamount)
                       : 'N/A'}
@@ -205,24 +205,24 @@ export default function CalculationDetailsModal({
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-green-800">Principal Paid:</span>
-                  <span className="font-mono text-green-900">
+                  <span className="text-green-800 dark:text-green-300">Principal Paid:</span>
+                  <span className="font-mono text-green-900 dark:text-green-200">
                     {row.principalpaid !== null
                       ? formatCurrency(row.principalpaid)
                       : 'N/A'}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-green-800">Interest Paid:</span>
-                  <span className="font-mono text-green-900">
+                  <span className="text-green-800 dark:text-green-300">Interest Paid:</span>
+                  <span className="font-mono text-green-900 dark:text-green-200">
                     {row.interestpaid !== null
                       ? formatCurrency(row.interestpaid)
                       : 'N/A'}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-green-800">Late Fee:</span>
-                  <span className="font-mono text-green-900">
+                  <span className="text-green-800 dark:text-green-300">Late Fee:</span>
+                  <span className="font-mono text-green-900 dark:text-green-200">
                     {row.latefee !== null
                       ? formatCurrency(row.latefee)
                       : formatCurrency(0)}
@@ -230,15 +230,15 @@ export default function CalculationDetailsModal({
                 </div>
                 {row.creditapplied !== null && row.creditapplied !== 0 && (
                   <div className="flex justify-between">
-                    <span className="text-green-800">Credit Applied:</span>
-                    <span className="font-mono text-green-900">
+                    <span className="text-green-800 dark:text-green-300">Credit Applied:</span>
+                    <span className="font-mono text-green-900 dark:text-green-200">
                       {formatCurrency(row.creditapplied)}
                     </span>
                   </div>
                 )}
-                <div className="flex justify-between pt-2 border-t border-green-200">
-                  <span className="text-green-800">Ending Balance:</span>
-                  <span className="font-mono font-semibold text-green-900">
+                <div className="flex justify-between pt-2 border-t border-green-200 dark:border-green-800">
+                  <span className="text-green-800 dark:text-green-300">Ending Balance:</span>
+                  <span className="font-mono font-semibold text-green-900 dark:text-green-200">
                     {formatCurrency(row.endingbalance)}
                   </span>
                 </div>
@@ -249,15 +249,15 @@ export default function CalculationDetailsModal({
             <div
               className={`rounded-lg p-4 ${
                 validation.allocationCheck.isValid
-                  ? 'bg-green-50 border border-green-200'
-                  : 'bg-red-50 border border-red-200'
+                  ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800'
               }`}
             >
               <h3
                 className={`text-sm font-semibold mb-3 flex items-center gap-2 ${
                   validation.allocationCheck.isValid
-                    ? 'text-green-900'
-                    : 'text-red-900'
+                    ? 'text-green-900 dark:text-green-200'
+                    : 'text-red-900 dark:text-red-200'
                 }`}
               >
                 {getValidationIcon(validation.allocationCheck.isValid)}
@@ -267,11 +267,11 @@ export default function CalculationDetailsModal({
                 <div
                   className={
                     validation.allocationCheck.isValid
-                      ? 'text-green-800'
-                      : 'text-red-800'
+                      ? 'text-green-800 dark:text-green-300'
+                      : 'text-red-800 dark:text-red-300'
                   }
                 >
-                  <div className="font-mono text-xs bg-white p-2 rounded border border-gray-200">
+                  <div className="font-mono text-xs bg-card p-2 rounded border border-border">
                     {formatCurrency(validation.allocationCheck.actual)} ={' '}
                     {formatCurrency(row.principalpaid || 0)} +{' '}
                     {formatCurrency(row.interestpaid || 0)} +{' '}
@@ -285,7 +285,7 @@ export default function CalculationDetailsModal({
                     Interest Paid + Late Fee - Credit Applied
                   </div>
                   {!validation.allocationCheck.isValid && (
-                    <div className="mt-2 p-2 bg-red-100 rounded">
+                    <div className="mt-2 p-2 bg-red-100 dark:bg-red-900 rounded">
                       <strong>Discrepancy:</strong>{' '}
                       {formatCurrency(Math.abs(validation.allocationCheck.diff))}
                     </div>
@@ -298,15 +298,15 @@ export default function CalculationDetailsModal({
             <div
               className={`rounded-lg p-4 ${
                 validation.balanceCheck.isValid
-                  ? 'bg-green-50 border border-green-200'
-                  : 'bg-red-50 border border-red-200'
+                  ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800'
               }`}
             >
               <h3
                 className={`text-sm font-semibold mb-3 flex items-center gap-2 ${
                   validation.balanceCheck.isValid
-                    ? 'text-green-900'
-                    : 'text-red-900'
+                    ? 'text-green-900 dark:text-green-200'
+                    : 'text-red-900 dark:text-red-200'
                 }`}
               >
                 {getValidationIcon(validation.balanceCheck.isValid)}
@@ -317,8 +317,8 @@ export default function CalculationDetailsModal({
                   <span
                     className={
                       validation.balanceCheck.isValid
-                        ? 'text-green-800'
-                        : 'text-red-800'
+                        ? 'text-green-800 dark:text-green-300'
+                        : 'text-red-800 dark:text-red-300'
                     }
                   >
                     Starting Balance:
@@ -331,8 +331,8 @@ export default function CalculationDetailsModal({
                   <span
                     className={
                       validation.balanceCheck.isValid
-                        ? 'text-green-800'
-                        : 'text-red-800'
+                        ? 'text-green-800 dark:text-green-300'
+                        : 'text-red-800 dark:text-red-300'
                     }
                   >
                     Less: Principal Paid:
@@ -341,12 +341,12 @@ export default function CalculationDetailsModal({
                     -{formatCurrency(row.principalpaid || 0)}
                   </span>
                 </div>
-                <div className="flex justify-between pt-2 border-t border-gray-300">
+                <div className="flex justify-between pt-2 border-t border-border">
                   <span
                     className={
                       validation.balanceCheck.isValid
-                        ? 'text-green-800'
-                        : 'text-red-800'
+                        ? 'text-green-800 dark:text-green-300'
+                        : 'text-red-800 dark:text-red-300'
                     }
                   >
                     Actual Ending Balance:
@@ -359,8 +359,8 @@ export default function CalculationDetailsModal({
                   <span
                     className={
                       validation.balanceCheck.isValid
-                        ? 'text-green-800'
-                        : 'text-red-800'
+                        ? 'text-green-800 dark:text-green-300'
+                        : 'text-red-800 dark:text-red-300'
                     }
                   >
                     Expected Ending Balance:
@@ -370,7 +370,7 @@ export default function CalculationDetailsModal({
                   </span>
                 </div>
                 {!validation.balanceCheck.isValid && (
-                  <div className="mt-2 p-2 bg-red-100 rounded">
+                  <div className="mt-2 p-2 bg-red-100 dark:bg-red-900 rounded">
                     <strong>Discrepancy:</strong>{' '}
                     {formatCurrency(validation.balanceCheck.diff)}
                     <div className="mt-2 text-xs">
@@ -388,36 +388,36 @@ export default function CalculationDetailsModal({
             </div>
 
             {/* Payment Status Section */}
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <div className="bg-muted rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <span>📊</span>
                 PAYMENT STATUS
               </h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-800">Status:</span>
-                  <span className="font-semibold text-gray-900">
+                  <span className="text-card-foreground">Status:</span>
+                  <span className="font-semibold text-foreground">
                     {row.status || 'Pending'}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-800">Due Date:</span>
-                  <span className="font-mono text-gray-900">
+                  <span className="text-card-foreground">Due Date:</span>
+                  <span className="font-mono text-foreground">
                     {formatDate(row.duedate)}
                   </span>
                 </div>
                 {row.actualpaymentdate && (
                   <div className="flex justify-between">
-                    <span className="text-gray-800">Payment Date:</span>
-                    <span className="font-mono text-gray-900">
+                    <span className="text-card-foreground">Payment Date:</span>
+                    <span className="font-mono text-foreground">
                       {formatDate(row.actualpaymentdate)}
                     </span>
                   </div>
                 )}
                 {daysLate !== null && daysLate > 0 && (
-                  <div className="flex justify-between pt-2 border-t border-gray-300">
-                    <span className="text-gray-800">Days Late:</span>
-                    <span className="font-semibold text-red-600">
+                  <div className="flex justify-between pt-2 border-t border-border">
+                    <span className="text-card-foreground">Days Late:</span>
+                    <span className="font-semibold text-red-600 dark:text-red-400">
                       {daysLate} {daysLate === 1 ? 'day' : 'days'}
                     </span>
                   </div>
@@ -427,7 +427,7 @@ export default function CalculationDetailsModal({
           </div>
 
           {/* Footer */}
-          <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-4">
+          <div className="sticky bottom-0 bg-muted border-t border-border px-6 py-4">
             <button
               onClick={onClose}
               className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
