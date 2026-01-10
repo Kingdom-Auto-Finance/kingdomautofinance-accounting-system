@@ -22,6 +22,23 @@ def create_supabase_client():
 
 logger = logging.getLogger(__name__)
 
+def get_source_sheet_id():
+    """
+    Get the current source sheet ID from settings manager (if available).
+    Falls back to config module if settings manager is unavailable.
+    """
+    if config.USE_SETTINGS_MANAGER and config.settings_manager:
+        try:
+            return config.settings_manager.get_setting(
+                "SOURCE_PAYMENTS_SHEET_ID",
+                config.SOURCE_PAYMENTS_SHEET_ID  # Use config as fallback
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get SOURCE_PAYMENTS_SHEET_ID from settings manager: {e}. Using config fallback.")
+            return config.SOURCE_PAYMENTS_SHEET_ID
+    else:
+        return config.SOURCE_PAYMENTS_SHEET_ID
+
 # --- Constants for Column Names ---
 SOURCE_LOAN_ID_COL = "LoanId"
 SOURCE_DATE_COL = "Date"
@@ -95,7 +112,7 @@ def fetch_and_populate_payments(start_date_str=None, end_date_str=None, fetch_al
     supabase = create_supabase_client()
 
     # --- 1. Read Source Sheet ---
-    source_sheet_id = config.SOURCE_PAYMENTS_SHEET_ID
+    source_sheet_id = get_source_sheet_id()
     logger.info(
         f"Reading source payment data from Sheet ID: {source_sheet_id}, Tab: '{SOURCE_SHEET_TAB_NAME}'"
     )
