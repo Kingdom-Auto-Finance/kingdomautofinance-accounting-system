@@ -157,11 +157,11 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="bg-card p-6 rounded-lg shadow border-2 border-purple-500 dark:border-purple-400">
+            <div className="bg-card p-6 rounded-lg shadow border-2 border-blue-500 dark:border-blue-700">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Total Received</p>
-                  <p className="mt-2 text-3xl font-bold text-purple-600 dark:text-purple-400">
+                  <p className="mt-2 text-3xl font-bold text-blue-600 dark:text-blue-400">
                     ${(
                       parseFloat(summary['total_principal'] || '0') +
                       parseFloat(summary['total_interest'] || '0') +
@@ -169,7 +169,7 @@ export default function DashboardPage() {
                     ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
-                <div className="p-3 bg-purple-100 dark:bg-purple-900 rounded-full">
+                <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-full">
                   <span className="text-2xl">💰</span>
                 </div>
               </div>

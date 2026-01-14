@@ -223,7 +223,7 @@ export default function MaintenancePage() {
 
         {/* Info Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6">
+          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6">
             <h3 className="text-sm font-semibold text-yellow-900 dark:text-yellow-200 mb-2">⚠️ Important Notes</h3>
             <ul className="text-sm text-yellow-800 dark:text-yellow-300 space-y-2 list-disc list-inside">
               <li>Import operation can take several minutes</li>
@@ -232,7 +232,7 @@ export default function MaintenancePage() {
             </ul>
           </div>
 
-          <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
             <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-2">💡 How it works</h3>
             <ol className="text-sm text-blue-800 dark:text-blue-300 space-y-2 list-decimal list-inside">
               <li>Scans your configured Google Drive folder</li>

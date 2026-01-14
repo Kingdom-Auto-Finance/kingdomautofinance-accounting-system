@@ -336,11 +336,11 @@ export default function ReportsPage() {
                 </div>
               </div>
 
-              <div className="bg-card p-6 rounded-lg shadow border-2 border-purple-500 dark:border-purple-400">
+              <div className="bg-card p-6 rounded-lg shadow border-2 border-blue-500 dark:border-blue-700">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Total Received</p>
-                    <p className="mt-2 text-3xl font-bold text-purple-600 dark:text-purple-400">
+                    <p className="mt-2 text-3xl font-bold text-blue-600 dark:text-blue-400">
                       ${(
                         parseFloat(summary.total_principal || '0') +
                         parseFloat(summary.total_interest || '0') +
@@ -348,7 +348,7 @@ export default function ReportsPage() {
                       ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <div className="p-3 bg-purple-100 dark:bg-purple-900 rounded-full">
+                  <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-full">
                     <span className="text-2xl">💰</span>
                   </div>
                 </div>
@@ -404,11 +404,11 @@ export default function ReportsPage() {
                 </div>
               </div>
 
-              <div className="bg-card p-6 rounded-lg shadow border-2 border-purple-500 dark:border-purple-400">
+              <div className="bg-card p-6 rounded-lg shadow border-2 border-blue-500 dark:border-blue-700">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Total Received</p>
-                    <p className="mt-2 text-3xl font-bold text-purple-600 dark:text-purple-400">
+                    <p className="mt-2 text-3xl font-bold text-blue-600 dark:text-blue-400">
                       ${(
                         (breakdownTotals['principal_amount'] || breakdownTotals['total_principal'] || 0) +
                         (breakdownTotals['interest_amount'] || breakdownTotals['total_interest'] || 0) +
@@ -416,7 +416,7 @@ export default function ReportsPage() {
                       ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <div className="p-3 bg-purple-100 dark:bg-purple-900 rounded-full">
+                  <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-full">
                     <span className="text-2xl">💰</span>
                   </div>
                 </div>
@@ -445,7 +445,7 @@ export default function ReportsPage() {
                           {formatHeader(header)}
                         </th>
                       ))}
-                      <th className="px-4 py-3 text-left text-xs font-medium text-purple-700 dark:text-purple-300 uppercase tracking-wider bg-purple-50 dark:bg-purple-950">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-blue-700 dark:text-blue-300 uppercase tracking-wider bg-blue-50 dark:bg-blue-900/20">
                         Total Received
                       </th>
                     </tr>
@@ -461,18 +461,18 @@ export default function ReportsPage() {
                             {formatCellValue(header, row[header])}
                           </td>
                         ))}
-                        <td className="px-4 py-3 text-sm font-semibold text-purple-700 dark:text-purple-300 whitespace-nowrap bg-purple-50 dark:bg-purple-950">
+                        <td className="px-4 py-3 text-sm font-semibold text-blue-700 dark:text-blue-300 whitespace-nowrap bg-blue-50 dark:bg-blue-900/20">
                           ${calculateRowTotal(row).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-purple-50 dark:bg-purple-950 border-t-2 border-purple-500 dark:border-purple-400">
+                  <tfoot className="bg-blue-50 dark:bg-blue-900/20 border-t-2 border-blue-500 dark:border-blue-700">
                     <tr>
                       {breakdown.headers.map((header, index) => (
                         <td
                           key={header}
-                          className="px-4 py-3 text-sm font-bold text-purple-700 dark:text-purple-300 whitespace-nowrap"
+                          className="px-4 py-3 text-sm font-bold text-blue-700 dark:text-blue-300 whitespace-nowrap"
                         >
                           {index === 0 ? 'TOTALS' : (
                             breakdownTotals[header] !== undefined
@@ -481,7 +481,7 @@ export default function ReportsPage() {
                           )}
                         </td>
                       ))}
-                      <td className="px-4 py-3 text-sm font-bold text-purple-700 dark:text-purple-300 whitespace-nowrap">
+                      <td className="px-4 py-3 text-sm font-bold text-blue-700 dark:text-blue-300 whitespace-nowrap">
                         ${(
                           (breakdownTotals['principal_amount'] || breakdownTotals['total_principal'] || 0) +
                           (breakdownTotals['interest_amount'] || breakdownTotals['total_interest'] || 0) +
@@ -523,37 +523,6 @@ export default function ReportsPage() {
             </div>
           </div>
         )}
-
-        {/* Report Descriptions */}
-        <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
-          <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-3">📖 Report Descriptions</h3>
-          <dl className="space-y-3">
-            <div>
-              <dt className="text-sm font-medium text-blue-900 dark:text-blue-100">Summary Report</dt>
-              <dd className="text-sm text-blue-800 dark:text-blue-200 mt-1">
-                High-level overview with total principal paid, interest paid, late fees, and payment count for the date range.
-              </dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-blue-900 dark:text-blue-100">Day Breakdown</dt>
-              <dd className="text-sm text-blue-800 dark:text-blue-200 mt-1">
-                Shows daily totals grouped by payment date. Useful for tracking daily cash flow.
-              </dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-blue-900 dark:text-blue-100">Loan Breakdown</dt>
-              <dd className="text-sm text-blue-800 dark:text-blue-200 mt-1">
-                Groups payments by loan ID. Useful for seeing which loans are performing.
-              </dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-blue-900 dark:text-blue-100">Full Breakdown</dt>
-              <dd className="text-sm text-blue-800 dark:text-blue-200 mt-1">
-                Most detailed report showing every payment with loan ID, date, and all amounts. Best for detailed analysis.
-              </dd>
-            </div>
-          </dl>
-        </div>
       </div>
     </Layout>
   );

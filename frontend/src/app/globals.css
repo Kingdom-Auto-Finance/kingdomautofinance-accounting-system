@@ -45,11 +45,12 @@
 
   .dark {
     /* Dark mode colors (HSL format) - from requirements */
-    --background: 222.2 84% 4.9%;
+    /* Updated to be less colorful and more professional (Slate-ish) */
+    --background: 222 15% 10%;
     --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
+    --card: 222 15% 13%;
     --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
+    --popover: 222 15% 10%;
     --popover-foreground: 210 40% 98%;
     --primary: 210 40% 98%;
     --primary-foreground: 222.2 47.4% 11.2%;

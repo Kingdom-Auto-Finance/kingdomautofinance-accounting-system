@@ -233,9 +233,9 @@ export default function PaymentsPage() {
         </div>
 
         {/* Info Card */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-          <h3 className="text-sm font-semibold text-blue-900 mb-2">💡 How it works</h3>
-          <ol className="text-sm text-blue-800 space-y-2 list-decimal list-inside">
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
+          <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-2">💡 How it works</h3>
+          <ol className="text-sm text-blue-800 dark:text-blue-300 space-y-2 list-decimal list-inside">
             <li>
               <strong>Fetch Payments:</strong> Retrieves new payments from your Google Sheets source
             </li>
