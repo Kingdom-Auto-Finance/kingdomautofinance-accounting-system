@@ -120,7 +120,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Total Principal</p>
                   <p className="mt-2 text-3xl font-bold text-foreground">
-                    ${parseFloat(summary['Total Principal'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${parseFloat(summary['total_principal'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="p-3 bg-info-muted rounded-full">
@@ -134,7 +134,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Total Interest</p>
                   <p className="mt-2 text-3xl font-bold text-foreground">
-                    ${parseFloat(summary['Total Interest'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${parseFloat(summary['total_interest'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="p-3 bg-success-muted rounded-full">
@@ -148,7 +148,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Total Late Fees</p>
                   <p className="mt-2 text-3xl font-bold text-foreground">
-                    ${parseFloat(summary['Total Late Fees'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${parseFloat(summary['total_fees'] || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="p-3 bg-warning-muted rounded-full">
