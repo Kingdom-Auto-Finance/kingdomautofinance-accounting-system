@@ -159,6 +159,14 @@ export default function ReportsPage() {
 
   const breakdownTotals = breakdown ? calculateBreakdownTotals(breakdown.headers, breakdown.rows) : null;
 
+  // Calculate row total (sum of principal + interest + fees for a single row)
+  const calculateRowTotal = (row: ParsedRow): number => {
+    const principal = parseFloat(row['principal_amount'] || row['total_principal'] || '0') || 0;
+    const interest = parseFloat(row['interest_amount'] || row['total_interest'] || '0') || 0;
+    const fees = parseFloat(row['fee_amount'] || row['total_fees'] || '0') || 0;
+    return principal + interest + fees;
+  };
+
   // Format column header for display
   const formatHeader = (header: string): string => {
     return header
@@ -437,6 +445,9 @@ export default function ReportsPage() {
                           {formatHeader(header)}
                         </th>
                       ))}
+                      <th className="px-4 py-3 text-left text-xs font-medium text-purple-700 dark:text-purple-300 uppercase tracking-wider bg-purple-50 dark:bg-purple-950">
+                        Total Received
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -450,6 +461,9 @@ export default function ReportsPage() {
                             {formatCellValue(header, row[header])}
                           </td>
                         ))}
+                        <td className="px-4 py-3 text-sm font-semibold text-purple-700 dark:text-purple-300 whitespace-nowrap bg-purple-50 dark:bg-purple-950">
+                          ${calculateRowTotal(row).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -467,6 +481,13 @@ export default function ReportsPage() {
                           )}
                         </td>
                       ))}
+                      <td className="px-4 py-3 text-sm font-bold text-purple-700 dark:text-purple-300 whitespace-nowrap">
+                        ${(
+                          (breakdownTotals['principal_amount'] || breakdownTotals['total_principal'] || 0) +
+                          (breakdownTotals['interest_amount'] || breakdownTotals['total_interest'] || 0) +
+                          (breakdownTotals['fee_amount'] || breakdownTotals['total_fees'] || 0)
+                        ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
                     </tr>
                   </tfoot>
                 </table>
