@@ -139,6 +139,26 @@ export default function ReportsPage() {
   const summary = reportData && reportType === 'summary' ? parseSummaryCSV(reportData) : null;
   const breakdown = reportData && reportType !== 'summary' ? parseBreakdownCSV(reportData) : null;
 
+  // Calculate totals from breakdown rows
+  const calculateBreakdownTotals = (headers: string[], rows: ParsedRow[]) => {
+    const totals: Record<string, number> = {};
+
+    headers.forEach(header => {
+      const lowerHeader = header.toLowerCase();
+      // Only sum numeric columns (amounts, principal, interest, fees)
+      if (lowerHeader.includes('amount') || lowerHeader.includes('principal') || lowerHeader.includes('interest') || lowerHeader.includes('fee')) {
+        totals[header] = rows.reduce((sum, row) => {
+          const val = parseFloat(row[header] || '0');
+          return sum + (isNaN(val) ? 0 : val);
+        }, 0);
+      }
+    });
+
+    return totals;
+  };
+
+  const breakdownTotals = breakdown ? calculateBreakdownTotals(breakdown.headers, breakdown.rows) : null;
+
   // Format column header for display
   const formatHeader = (header: string): string => {
     return header
@@ -265,7 +285,7 @@ export default function ReportsPage() {
         {/* Summary Report Display */}
         {summary && (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div className="bg-card p-6 rounded-lg shadow border border-border">
                 <div className="flex items-center justify-between">
                   <div>
@@ -307,52 +327,152 @@ export default function ReportsPage() {
                   </div>
                 </div>
               </div>
+
+              <div className="bg-card p-6 rounded-lg shadow border-2 border-purple-500 dark:border-purple-400">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Received</p>
+                    <p className="mt-2 text-3xl font-bold text-purple-600 dark:text-purple-400">
+                      ${(
+                        parseFloat(summary.total_principal || '0') +
+                        parseFloat(summary.total_interest || '0') +
+                        parseFloat(summary.total_fees || '0')
+                      ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-purple-100 dark:bg-purple-900 rounded-full">
+                    <span className="text-2xl">💰</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
         {/* Breakdown Report Display (Table) */}
-        {breakdown && breakdown.rows.length > 0 && (
-          <div className="bg-card rounded-lg shadow border border-border overflow-hidden">
-            <div className="p-4 border-b border-border">
-              <h3 className="text-lg font-semibold text-foreground">
-                {reportTypes.find(t => t.value === reportType)?.label} Results
-              </h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                {breakdown.rows.length} record{breakdown.rows.length !== 1 ? 's' : ''} found for {formatDate(startDate)} to {formatDate(endDate)}
-              </p>
+        {breakdown && breakdown.rows.length > 0 && breakdownTotals && (
+          <>
+            {/* Summary Cards for Breakdown Reports */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-card p-6 rounded-lg shadow border border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Principal</p>
+                    <p className="mt-2 text-3xl font-bold text-foreground">
+                      ${(breakdownTotals['principal_amount'] || breakdownTotals['total_principal'] || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-full">
+                    <span className="text-2xl">💵</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-card p-6 rounded-lg shadow border border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Interest</p>
+                    <p className="mt-2 text-3xl font-bold text-foreground">
+                      ${(breakdownTotals['interest_amount'] || breakdownTotals['total_interest'] || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-green-100 dark:bg-green-900 rounded-full">
+                    <span className="text-2xl">📈</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-card p-6 rounded-lg shadow border border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Late Fees</p>
+                    <p className="mt-2 text-3xl font-bold text-foreground">
+                      ${(breakdownTotals['fee_amount'] || breakdownTotals['total_fees'] || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-yellow-100 dark:bg-yellow-900 rounded-full">
+                    <span className="text-2xl">⚠️</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-card p-6 rounded-lg shadow border-2 border-purple-500 dark:border-purple-400">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Received</p>
+                    <p className="mt-2 text-3xl font-bold text-purple-600 dark:text-purple-400">
+                      ${(
+                        (breakdownTotals['principal_amount'] || breakdownTotals['total_principal'] || 0) +
+                        (breakdownTotals['interest_amount'] || breakdownTotals['total_interest'] || 0) +
+                        (breakdownTotals['fee_amount'] || breakdownTotals['total_fees'] || 0)
+                      ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-purple-100 dark:bg-purple-900 rounded-full">
+                    <span className="text-2xl">💰</span>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-muted/50">
-                  <tr>
-                    {breakdown.headers.map((header) => (
-                      <th
-                        key={header}
-                        className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                      >
-                        {formatHeader(header)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {breakdown.rows.map((row, rowIndex) => (
-                    <tr key={rowIndex} className="hover:bg-muted/30 transition-colors">
+
+            {/* Table */}
+            <div className="bg-card rounded-lg shadow border border-border overflow-hidden">
+              <div className="p-4 border-b border-border">
+                <h3 className="text-lg font-semibold text-foreground">
+                  {reportTypes.find(t => t.value === reportType)?.label} Results
+                </h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {breakdown.rows.length} record{breakdown.rows.length !== 1 ? 's' : ''} found for {formatDate(startDate)} to {formatDate(endDate)}
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-muted/50">
+                    <tr>
                       {breakdown.headers.map((header) => (
+                        <th
+                          key={header}
+                          className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                        >
+                          {formatHeader(header)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {breakdown.rows.map((row, rowIndex) => (
+                      <tr key={rowIndex} className="hover:bg-muted/30 transition-colors">
+                        {breakdown.headers.map((header) => (
+                          <td
+                            key={header}
+                            className="px-4 py-3 text-sm text-foreground whitespace-nowrap"
+                          >
+                            {formatCellValue(header, row[header])}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-purple-50 dark:bg-purple-950 border-t-2 border-purple-500 dark:border-purple-400">
+                    <tr>
+                      {breakdown.headers.map((header, index) => (
                         <td
                           key={header}
-                          className="px-4 py-3 text-sm text-foreground whitespace-nowrap"
+                          className="px-4 py-3 text-sm font-bold text-purple-700 dark:text-purple-300 whitespace-nowrap"
                         >
-                          {formatCellValue(header, row[header])}
+                          {index === 0 ? 'TOTALS' : (
+                            breakdownTotals[header] !== undefined
+                              ? '$' + breakdownTotals[header].toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                              : ''
+                          )}
                         </td>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </tfoot>
+                </table>
+              </div>
             </div>
-          </div>
+          </>
         )}
 
         {/* Empty State for Breakdown */}

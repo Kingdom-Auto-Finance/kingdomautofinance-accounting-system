@@ -114,7 +114,7 @@ export default function DashboardPage() {
 
         {/* Summary Cards */}
         {summary && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="bg-card p-6 rounded-lg shadow border border-border">
               <div className="flex items-center justify-between">
                 <div>
@@ -153,6 +153,24 @@ export default function DashboardPage() {
                 </div>
                 <div className="p-3 bg-warning-muted rounded-full">
                   <span className="text-2xl">⚠️</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-card p-6 rounded-lg shadow border-2 border-purple-500 dark:border-purple-400">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Total Received</p>
+                  <p className="mt-2 text-3xl font-bold text-purple-600 dark:text-purple-400">
+                    ${(
+                      parseFloat(summary['total_principal'] || '0') +
+                      parseFloat(summary['total_interest'] || '0') +
+                      parseFloat(summary['total_fees'] || '0')
+                    ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="p-3 bg-purple-100 dark:bg-purple-900 rounded-full">
+                  <span className="text-2xl">💰</span>
                 </div>
               </div>
             </div>
