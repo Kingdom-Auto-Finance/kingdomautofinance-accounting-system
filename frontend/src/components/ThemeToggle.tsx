@@ -1,6 +1,7 @@
 'use client';
 
 import { useTheme } from '@/contexts/ThemeContext';
+import { Sun, Moon } from 'lucide-react';
 
 export default function ThemeToggle() {
   const { theme, toggleTheme, isLoading } = useTheme();
@@ -17,8 +18,8 @@ export default function ThemeToggle() {
   return (
     <div className="flex items-center justify-between p-4 bg-card border border-border rounded-lg">
       <div className="flex items-center gap-3">
-        <div className="text-2xl">
-          {theme === 'dark' ? '🌙' : '☀️'}
+        <div className="text-muted-foreground">
+          {theme === 'dark' ? <Moon className="h-6 w-6" /> : <Sun className="h-6 w-6" />}
         </div>
         <div>
           <div className="text-sm font-medium text-foreground">

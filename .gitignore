@@ -185,3 +185,7 @@ data/                 # If you had a local data directory (not needed for GSheet
 # Allow frontend lib directory
 !frontend/src/lib/
 venv/
+
+# Node.js
+node_modules/
+.next/

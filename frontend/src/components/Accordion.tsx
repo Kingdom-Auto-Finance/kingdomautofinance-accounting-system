@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 
 interface AccordionItemProps {
   title: string;
@@ -24,15 +25,10 @@ export function AccordionItem({ title, icon, defaultOpen = false, children }: Ac
           {icon && <span className="text-xl">{icon}</span>}
           <h3 className="text-lg font-semibold text-foreground">{title}</h3>
         </div>
-        <svg
+        <ChevronDown
           className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
           aria-hidden="true"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        />
       </button>
 
       <div

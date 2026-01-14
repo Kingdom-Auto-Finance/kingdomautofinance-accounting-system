@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { type ScheduleRow, type PaymentValidation } from '@/types/amortization';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { X, ClipboardList, CheckCircle2, Activity, Check } from 'lucide-react';
 
 interface CalculationDetailsModalProps {
   isOpen: boolean;
@@ -86,9 +87,9 @@ export default function CalculationDetailsModal({
 
   const getValidationIcon = (isValid: boolean) => {
     return isValid ? (
-      <span className="text-green-600 font-bold">✓</span>
+      <Check className="h-4 w-4 text-green-600" />
     ) : (
-      <span className="text-red-600 font-bold">✗</span>
+      <X className="h-4 w-4 text-red-600" />
     );
   };
 
@@ -124,19 +125,7 @@ export default function CalculationDetailsModal({
               className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="Close modal"
             >
-              <svg
-                className="w-6 h-6"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+              <X className="w-6 h-6" />
             </button>
           </div>
 
@@ -145,7 +134,7 @@ export default function CalculationDetailsModal({
             {/* Scheduled Amounts Section */}
             <div className="bg-blue-50 dark:bg-blue-950 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-3 flex items-center gap-2">
-                <span>📋</span>
+                <ClipboardList className="h-4 w-4" />
                 SCHEDULED AMOUNTS
               </h3>
               <div className="space-y-2 text-sm">
@@ -181,7 +170,7 @@ export default function CalculationDetailsModal({
             {/* Actual Amounts Section */}
             <div className="bg-green-50 dark:bg-green-950 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-green-900 dark:text-green-200 mb-3 flex items-center gap-2">
-                <span>✅</span>
+                <CheckCircle2 className="h-4 w-4" />
                 ACTUAL AMOUNTS
               </h3>
               <div className="space-y-2 text-sm">
@@ -390,7 +379,7 @@ export default function CalculationDetailsModal({
             {/* Payment Status Section */}
             <div className="bg-muted rounded-lg p-4">
               <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                <span>📊</span>
+                <Activity className="h-4 w-4" />
                 PAYMENT STATUS
               </h3>
               <div className="space-y-2 text-sm">

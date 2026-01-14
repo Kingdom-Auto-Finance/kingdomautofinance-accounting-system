@@ -6,6 +6,7 @@ import {
   DEFAULT_VISIBLE_COLUMNS,
   type ColumnDefinition,
 } from '@/types/amortization';
+import { SlidersHorizontal, X } from 'lucide-react';
 
 interface ColumnCustomizerProps {
   visibleColumns: Set<string>;
@@ -84,19 +85,7 @@ export default function ColumnCustomizer({
         onClick={() => setIsOpen(true)}
         className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-card-foreground bg-card border border-input rounded-lg hover:bg-muted transition-colors"
       >
-        <svg
-          className="w-4 h-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-          />
-        </svg>
+        <SlidersHorizontal className="w-4 h-4" />
         Customize Columns
         <span className="px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-200 rounded-full">
           {visibleColumns.size}
@@ -130,19 +119,7 @@ export default function ColumnCustomizer({
                     onClick={handleCancel}
                     className="text-muted-foreground hover:text-foreground"
                   >
-                    <svg
-                      className="w-6 h-6"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M6 18L18 6M6 6l12 12"
-                      />
-                    </svg>
+                    <X className="w-6 h-6" />
                   </button>
                 </div>
               </div>

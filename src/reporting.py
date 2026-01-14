@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import datetime
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
 from supabase import create_client
@@ -53,9 +54,15 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
         logger.error(f"Failed to query loans table '{LOANS_TABLE}': {str(e)}")
         raise
 
-    # 3) Query each loan schedule table
+    # 3) Query each loan schedule table IN PARALLEL for better performance
     rows = []
-    for loan_id in loan_ids:
+
+    # Validate date parameters before parallel execution
+    if not all_dates and (not start_date or not end_date):
+        raise ValueError("start_date and end_date must be provided when --all is not set")
+
+    def query_loan_schedule(loan_id):
+        """Query a single loan's schedule table."""
         try:
             table_name = f"schedule_{loan_id}"
             table = supabase.from_(table_name)
@@ -67,8 +74,6 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
             )
 
             if not all_dates:
-                if not start_date or not end_date:
-                    raise ValueError("start_date and end_date must be provided when --all is not set")
                 query = (
                     query
                         .gte("actualpaymentdate", f"{start_date}T00:00:00Z")
@@ -77,6 +82,8 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
 
             resp_sched = query.execute()
             data = resp_sched.data or []
+
+            loan_rows = []
             for r in data:
                 raw_date = r.get("actualpaymentdate")
                 if raw_date is None:
@@ -84,17 +91,24 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
                 payment_date = datetime.fromisoformat(raw_date.rstrip("Z")).date()
                 # Format date as mm/dd/yyyy for CSV export
                 formatted_date = payment_date.strftime("%m/%d/%Y")
-                rows.append({
+                loan_rows.append({
                     "loan_id": loan_id,
                     "payment_date": formatted_date,
                     "principal_amount": float(r.get("principalpaid", 0.0)),
                     "interest_amount": float(r.get("interestpaid", 0.0)),
                     "fee_amount": float(r.get("latefee", 0.0)),
                 })
+            return loan_rows
         except Exception as e:
             logger.warning(f"Failed to query schedule for loan_id '{loan_id}': {str(e)}")
-            # Continue with other loans instead of failing completely
-            continue
+            return []
+
+    # Execute queries in parallel with thread pool (max 10 concurrent requests)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(query_loan_schedule, loan_id): loan_id for loan_id in loan_ids}
+        for future in as_completed(futures):
+            loan_rows = future.result()
+            rows.extend(loan_rows)
 
     # 4) Build DataFrame
     df = pd.DataFrame(rows)

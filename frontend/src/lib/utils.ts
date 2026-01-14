@@ -20,12 +20,20 @@ export function formatCurrency(amount: number): string {
 
 /**
  * Format dates as mm/dd/yyyy
+ * Handles ISO strings directly to avoid timezone issues
  */
 export function formatDate(date: Date | string): string {
+  // If it's an ISO string (YYYY-MM-DD), parse directly to avoid timezone issues
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(date)) {
+    const datePart = date.split('T')[0];
+    const parts = datePart.split('-');
+    return `${parts[1]}/${parts[2]}/${parts[0]}`;
+  }
+  // For Date objects, use UTC methods to avoid timezone shift
   const d = new Date(date);
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const year = d.getFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const year = d.getUTCFullYear();
   return `${month}/${day}/${year}`;
 }
 
