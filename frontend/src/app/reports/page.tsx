@@ -109,7 +109,11 @@ export default function ReportsPage() {
       result[header.trim()] = values[index]?.trim() || '0';
     });
 
-    return result as ParsedSummary;
+    return {
+      total_principal: result['total_principal'] || '0',
+      total_interest: result['total_interest'] || '0',
+      total_fees: result['total_fees'] || '0',
+    };
   };
 
   // Parse CSV into array of rows (for breakdown reports)
