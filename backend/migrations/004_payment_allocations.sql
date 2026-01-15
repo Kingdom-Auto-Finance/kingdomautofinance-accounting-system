@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS payment_allocations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     -- Link to original payment in payments_log
-    payment_log_id BIGINT REFERENCES payments_log(id) ON DELETE SET NULL,
+    payment_log_id UUID REFERENCES payments_log(id) ON DELETE SET NULL,
 
     -- Loan identifier
     loan_id VARCHAR(50) NOT NULL,

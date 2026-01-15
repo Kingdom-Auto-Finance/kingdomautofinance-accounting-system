@@ -21,7 +21,7 @@ THRESHOLD_RATIO = Decimal('0.90')  # require at least 90% of installment
 # -----------------------------
 # Payment Allocation Recording
 # -----------------------------
-def _record_allocation(sb, payment_log_id: int, loan_id: str, payment_date: str,
+def _record_allocation(sb, payment_log_id: str, loan_id: str, payment_date: str,
                        payment_number: int, principal_amt: Decimal,
                        interest_amt: Decimal, late_fee_amt: Decimal):
     """
