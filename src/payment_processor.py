@@ -136,8 +136,16 @@ def process_payments():
         return True
 
     missing = []
+    processed_count = 0
 
     for payment in payments:
+        # To avoid RemoteProtocolError (ConnectionTerminated) on large batches,
+        # refresh the client connection every 200 payments.
+        processed_count += 1
+        if processed_count % 200 == 0:
+            logger.info(f"Refreshing Supabase client at payment {processed_count} to prevent connection drop...")
+            sb = _client()
+
         pid = payment["id"]
         loan_id = payment["loan_id"]
         pay_date_str = payment["payment_date"]  # Format: YYYY-MM-DD
