@@ -42,8 +42,8 @@ def _record_allocation(sb, payment_log_id: str, loan_id: str, payment_date: str,
         late_fee_amt: Late fee portion allocated from this payment
     """
     try:
-        # Use upsert to handle re-processing scenarios (idempotent)
-        sb.table("payment_allocations").upsert({
+        # Use insert for an append-only audit trail
+        sb.table("payment_allocations").insert({
             "payment_log_id": payment_log_id,
             "loan_id": loan_id,
             "payment_date": payment_date,
@@ -51,7 +51,7 @@ def _record_allocation(sb, payment_log_id: str, loan_id: str, payment_date: str,
             "principal_allocated": float(principal_amt),
             "interest_allocated": float(interest_amt),
             "late_fee_allocated": float(late_fee_amt),
-        }, on_conflict="payment_log_id,payment_number").execute()
+        }).execute()
     except Exception as e:
         logger.warning(f"Failed to record allocation for payment {payment_log_id}: {e}")
 

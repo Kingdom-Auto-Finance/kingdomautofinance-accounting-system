@@ -60,15 +60,12 @@ def fetch_payments_log_for_period(start_date: str, end_date: str) -> List[Dict]:
     return all_payments
 
 
-def fetch_schedule_totals_for_period(start_date: str, end_date: str) -> Dict[str, Dict[str, Dict]]:
+def fetch_schedule_totals_for_period(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
-    Fetch allocation totals from payment_allocations ledger for all loans
-    in the given date range.
+    Fetch aggregated totals from payment_allocations table.
 
-    This uses the payment_allocations table which preserves the original
-    payment_date, ensuring accurate cash-basis comparisons.
-
-    Returns nested dict: {loan_id: {payment_date: {principal, interest, late_fee, total}}}
+    Returns dict mapping payment_log_id to its allocation totals:
+    {payment_log_id: {principal, interest, late_fee, total}}
     """
     supabase = get_supabase_client()
 
@@ -81,7 +78,7 @@ def fetch_schedule_totals_for_period(start_date: str, end_date: str) -> Dict[str
         try:
             result = (
                 supabase.table("payment_allocations")
-                .select("loan_id, payment_date, principal_allocated, interest_allocated, late_fee_allocated")
+                .select("payment_log_id, principal_allocated, interest_allocated, late_fee_allocated")
                 .gte("payment_date", start_date)
                 .lte("payment_date", end_date)
                 .range(offset, offset + page_size - 1)
@@ -102,32 +99,25 @@ def fetch_schedule_totals_for_period(start_date: str, end_date: str) -> Dict[str
             logger.error(f"Failed to query payment_allocations: {e}")
             return {}
 
-    # Group by loan_id and payment_date
-    schedule_data: Dict[str, Dict[str, Dict]] = {}
+    # Group by payment_log_id
+    schedule_data: Dict[str, Dict] = {}
 
     for alloc in all_allocations:
-        loan_id = alloc["loan_id"]
-        raw_date = alloc.get("payment_date")
-        if not raw_date:
+        log_id = alloc.get("payment_log_id")
+        if not log_id:
             continue
-
-        # Extract date portion (handle both date and datetime formats)
-        payment_date = str(raw_date)[:10]
 
         principal = float(alloc.get("principal_allocated") or 0)
         interest = float(alloc.get("interest_allocated") or 0)
         late_fee = float(alloc.get("late_fee_allocated") or 0)
 
-        if loan_id not in schedule_data:
-            schedule_data[loan_id] = {}
-
-        if payment_date in schedule_data[loan_id]:
-            schedule_data[loan_id][payment_date]["principal"] += principal
-            schedule_data[loan_id][payment_date]["interest"] += interest
-            schedule_data[loan_id][payment_date]["late_fee"] += late_fee
-            schedule_data[loan_id][payment_date]["total"] += principal + interest + late_fee
+        if log_id in schedule_data:
+            schedule_data[log_id]["principal"] += principal
+            schedule_data[log_id]["interest"] += interest
+            schedule_data[log_id]["late_fee"] += late_fee
+            schedule_data[log_id]["total"] += principal + interest + late_fee
         else:
-            schedule_data[loan_id][payment_date] = {
+            schedule_data[log_id] = {
                 "principal": principal,
                 "interest": interest,
                 "late_fee": late_fee,
@@ -139,7 +129,7 @@ def fetch_schedule_totals_for_period(start_date: str, end_date: str) -> Dict[str
 
 def find_discrepancies(
     payments: List[Dict],
-    schedule_data: Dict[str, Dict[str, Dict]]
+    schedule_data: Dict[str, Dict]
 ) -> List[Dict]:
     """
     Compare payments_log entries against schedule totals.
@@ -148,13 +138,11 @@ def find_discrepancies(
     discrepancies = []
 
     for payment in payments:
-        loan_id = payment["loan_id"]
-        payment_date = payment["payment_date"]
+        payment_id = payment["id"]
         payment_amount = float(payment["payment_amount"])
 
-        # Get schedule totals for this loan/date
-        loan_schedules = schedule_data.get(loan_id, {})
-        schedule_totals = loan_schedules.get(payment_date, {})
+        # Get schedule totals for this specific payment record
+        schedule_totals = schedule_data.get(payment_id, {})
 
         schedule_total = schedule_totals.get("total", 0.0)
         difference = payment_amount - schedule_total
@@ -162,9 +150,9 @@ def find_discrepancies(
         # Check if discrepancy exceeds tolerance
         if abs(difference) > TOLERANCE:
             discrepancies.append({
-                "loan_id": loan_id,
-                "payment_log_id": payment["id"],
-                "payment_date": payment_date,
+                "loan_id": payment["loan_id"],
+                "payment_log_id": payment_id,
+                "payment_date": payment["payment_date"],
                 "payment_log_amount": round(payment_amount, 2),
                 "schedule_principal": round(schedule_totals.get("principal", 0.0), 2),
                 "schedule_interest": round(schedule_totals.get("interest", 0.0), 2),
