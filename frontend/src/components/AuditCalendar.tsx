@@ -1,6 +1,7 @@
 'use client';
 
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 
 interface AuditCalendarProps {
   currentMonth: Date;
@@ -25,6 +26,36 @@ export default function AuditCalendar({
 }: AuditCalendarProps) {
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
+
+  // Month/year picker state
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [pickerYear, setPickerYear] = useState(year);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  // Sync picker year when current month changes externally
+  useEffect(() => {
+    setPickerYear(year);
+  }, [year]);
+
+  // Close picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) {
+        setIsPickerOpen(false);
+      }
+    };
+
+    if (isPickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isPickerOpen]);
+
+  // Handle month selection from picker
+  const handleMonthSelect = (selectedMonth: number) => {
+    onMonthChange(new Date(pickerYear, selectedMonth, 1));
+    setIsPickerOpen(false);
+  };
 
   // Get first day of month and number of days
   const firstDayOfMonth = new Date(year, month, 1);
@@ -112,9 +143,62 @@ export default function AuditCalendar({
           <ChevronLeft className="h-5 w-5" />
         </button>
 
-        <h2 className="text-xl font-semibold text-foreground">
-          {MONTHS[month]} {year}
-        </h2>
+        <div className="relative" ref={pickerRef}>
+          <button
+            onClick={() => setIsPickerOpen(!isPickerOpen)}
+            className="text-xl font-semibold text-foreground hover:text-primary transition-colors cursor-pointer flex items-center gap-1"
+            aria-label="Select month and year"
+          >
+            {MONTHS[month]} {year}
+            <ChevronDown className={`h-4 w-4 transition-transform ${isPickerOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {/* Month/Year Picker Dropdown */}
+          {isPickerOpen && (
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-card border border-border rounded-xl shadow-lg p-4 z-50 min-w-[280px]">
+              {/* Year selector */}
+              <div className="flex items-center justify-between mb-4">
+                <button
+                  onClick={() => setPickerYear(y => y - 1)}
+                  className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+                  aria-label="Previous year"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <span className="font-semibold text-lg">{pickerYear}</span>
+                <button
+                  onClick={() => setPickerYear(y => y + 1)}
+                  className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+                  aria-label="Next year"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Month grid */}
+              <div className="grid grid-cols-4 gap-2">
+                {MONTHS.map((monthName, idx) => {
+                  const isCurrentSelection = idx === month && pickerYear === year;
+                  return (
+                    <button
+                      key={monthName}
+                      onClick={() => handleMonthSelect(idx)}
+                      className={`
+                        px-2 py-2 rounded-lg text-sm font-medium transition-colors
+                        ${isCurrentSelection
+                          ? 'bg-primary text-primary-foreground'
+                          : 'hover:bg-muted text-foreground'
+                        }
+                      `}
+                    >
+                      {monthName.slice(0, 3)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
 
         <button
           onClick={goToNextMonth}
