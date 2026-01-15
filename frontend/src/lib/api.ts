@@ -118,6 +118,50 @@ export const jobsAPI = {
     ),
 };
 
+// Audit API
+export interface DiscrepancySummary {
+  total_discrepancies: number;
+  total_affected_loans: number;
+}
+
+export interface MonthlyDiscrepanciesResponse {
+  year: number;
+  month: number;
+  discrepancy_dates: string[];
+  summary: DiscrepancySummary;
+}
+
+export interface DiscrepancyDetail {
+  loan_id: string;
+  payment_log_id: string;
+  payment_date: string;
+  payment_log_amount: number;
+  schedule_principal: number;
+  schedule_interest: number;
+  schedule_late_fee: number;
+  schedule_total: number;
+  difference: number;
+}
+
+export interface DateDiscrepanciesResponse {
+  date: string;
+  discrepancies: DiscrepancyDetail[];
+}
+
+export const auditAPI = {
+  monthlyDiscrepancies: (year: number, month: number) =>
+    fetchAPI<MonthlyDiscrepanciesResponse>('/audit/monthly-discrepancies', {
+      method: 'POST',
+      body: { year, month },
+    }),
+
+  dateDiscrepancies: (date: string) =>
+    fetchAPI<DateDiscrepanciesResponse>('/audit/date-discrepancies', {
+      method: 'POST',
+      body: { date },
+    }),
+};
+
 // Settings API
 export const settingsAPI = {
   getAll: (category?: string) =>
@@ -155,6 +199,7 @@ export default {
   reportsAPI,
   amortizationAPI,
   jobsAPI,
+  auditAPI,
   settingsAPI,
   healthCheck,
 };
