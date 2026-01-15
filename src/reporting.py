@@ -1,15 +1,11 @@
 import pandas as pd
 from datetime import datetime
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
 from supabase import create_client
 
 logger = logging.getLogger(__name__)
-
-# Optional config constant for which table holds loan IDs
-LOANS_TABLE = getattr(config, "LOANS_TABLE", "loans")
 
 import os
 def get_supabase_key():
@@ -23,8 +19,12 @@ def get_supabase_key():
 
 def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = False) -> pd.DataFrame:
     """
-    Fetch payment schedule rows from Supabase for all loans,
-    filtered by date range unless all_dates=True.
+    Fetch payment allocation data from the payment_allocations ledger.
+
+    This queries the payment_allocations table which preserves the original
+    payment_date for each payment, ensuring cash-basis reporting where
+    payments appear in the month they were actually received by the bank.
+
     Returns a DataFrame with columns:
       - loan_id
       - payment_date (as string in mm/dd/yyyy format)
@@ -42,76 +42,73 @@ def fetch_data(start_date: str = None, end_date: str = None, all_dates: bool = F
         logger.error(f"Failed to connect to Supabase: {str(e)}")
         raise
 
-    # 2) Discover loan IDs from the loans table
-    try:
-        resp = supabase.from_(LOANS_TABLE).select("loan_id").execute()
-        loan_rows = resp.data or []
-        loan_ids = [r["loan_id"] for r in loan_rows]
-        if not loan_ids:
-            logger.error(f"No loan IDs found in Supabase table '{LOANS_TABLE}'.")
-            return pd.DataFrame()
-    except Exception as e:
-        logger.error(f"Failed to query loans table '{LOANS_TABLE}': {str(e)}")
-        raise
-
-    # 3) Query each loan schedule table IN PARALLEL for better performance
-    rows = []
-
-    # Validate date parameters before parallel execution
+    # 2) Validate date parameters
     if not all_dates and (not start_date or not end_date):
         raise ValueError("start_date and end_date must be provided when --all is not set")
 
-    def query_loan_schedule(loan_id):
-        """Query a single loan's schedule table."""
+    # 3) Query payment_allocations table with pagination
+    all_rows = []
+    page_size = 1000
+    offset = 0
+
+    while True:
         try:
-            table_name = f"schedule_{loan_id}"
-            table = supabase.from_(table_name)
-            query = table.select(
-                "actualpaymentdate",
-                "principalpaid",
-                "interestpaid",
-                "latefee"
+            query = supabase.from_("payment_allocations").select(
+                "loan_id",
+                "payment_date",
+                "principal_allocated",
+                "interest_allocated",
+                "late_fee_allocated"
             )
 
             if not all_dates:
-                query = (
-                    query
-                        .gte("actualpaymentdate", f"{start_date}T00:00:00Z")
-                        .lte("actualpaymentdate", f"{end_date}T23:59:59Z")
-                )
+                query = query.gte("payment_date", start_date).lte("payment_date", end_date)
 
-            resp_sched = query.execute()
-            data = resp_sched.data or []
+            result = query.order("payment_date").range(offset, offset + page_size - 1).execute()
+            data = result.data or []
 
-            loan_rows = []
-            for r in data:
-                raw_date = r.get("actualpaymentdate")
-                if raw_date is None:
-                    continue
-                payment_date = datetime.fromisoformat(raw_date.rstrip("Z")).date()
-                # Format date as mm/dd/yyyy for CSV export
-                formatted_date = payment_date.strftime("%m/%d/%Y")
-                loan_rows.append({
-                    "loan_id": loan_id,
-                    "payment_date": formatted_date,
-                    "principal_amount": float(r.get("principalpaid", 0.0)),
-                    "interest_amount": float(r.get("interestpaid", 0.0)),
-                    "fee_amount": float(r.get("latefee", 0.0)),
-                })
-            return loan_rows
+            if not data:
+                break
+
+            all_rows.extend(data)
+
+            if len(data) < page_size:
+                break
+
+            offset += page_size
+
         except Exception as e:
-            logger.warning(f"Failed to query schedule for loan_id '{loan_id}': {str(e)}")
-            return []
+            logger.error(f"Failed to query payment_allocations: {str(e)}")
+            raise
 
-    # Execute queries in parallel with thread pool (max 10 concurrent requests)
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(query_loan_schedule, loan_id): loan_id for loan_id in loan_ids}
-        for future in as_completed(futures):
-            loan_rows = future.result()
-            rows.extend(loan_rows)
+    # 4) Build DataFrame with formatted dates
+    rows = []
+    for r in all_rows:
+        raw_date = r.get("payment_date")
+        if raw_date is None:
+            continue
 
-    # 4) Build DataFrame
+        # Parse date (could be string or date object)
+        if isinstance(raw_date, str):
+            # Handle both YYYY-MM-DD and ISO datetime formats
+            date_str = raw_date[:10]  # Extract date portion
+            payment_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        else:
+            payment_date = raw_date
+
+        # Format date as mm/dd/yyyy for CSV export
+        formatted_date = payment_date.strftime("%m/%d/%Y")
+
+        rows.append({
+            "loan_id": r["loan_id"],
+            "payment_date": formatted_date,
+            "principal_amount": float(r.get("principal_allocated") or 0.0),
+            "interest_amount": float(r.get("interest_allocated") or 0.0),
+            "fee_amount": float(r.get("late_fee_allocated") or 0.0),
+        })
+
     df = pd.DataFrame(rows)
+    logger.info(f"Fetched {len(df)} allocation records from payment_allocations")
     return df
 
 

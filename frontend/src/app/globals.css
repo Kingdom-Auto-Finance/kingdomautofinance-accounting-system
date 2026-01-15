@@ -44,8 +44,7 @@
   }
 
   .dark {
-    /* Dark mode colors (HSL format) - from requirements */
-    /* Updated to be less colorful and more professional (Slate-ish) */
+    /* Dark mode colors (HSL format) - Professional Slate/Zinc theme */
     --background: 222 15% 10%;
     --foreground: 210 40% 98%;
     --card: 222 15% 13%;
@@ -66,7 +65,7 @@
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
 
-    /* Status color tokens - dark variants */
+    /* Status color tokens - less saturated dark variants */
     --success: 142 70% 45%;
     --success-foreground: 142 76% 96%;
     --success-muted: 142 70% 15%;

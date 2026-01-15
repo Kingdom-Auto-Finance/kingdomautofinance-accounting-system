@@ -5,10 +5,7 @@ Compares payments_log amounts against schedule table totals
 (principalpaid + interestpaid + latefee).
 """
 import logging
-from datetime import date, datetime
-from typing import Dict, List, Any, Optional
-from decimal import Decimal
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Any
 import calendar
 
 from app.db.supabase_client import get_supabase_client
@@ -65,76 +62,77 @@ def fetch_payments_log_for_period(start_date: str, end_date: str) -> List[Dict]:
 
 def fetch_schedule_totals_for_period(start_date: str, end_date: str) -> Dict[str, Dict[str, Dict]]:
     """
-    Fetch schedule totals (principal + interest + late fee) for all loans
+    Fetch allocation totals from payment_allocations ledger for all loans
     in the given date range.
+
+    This uses the payment_allocations table which preserves the original
+    payment_date, ensuring accurate cash-basis comparisons.
 
     Returns nested dict: {loan_id: {payment_date: {principal, interest, late_fee, total}}}
     """
     supabase = get_supabase_client()
 
-    # Get all loan IDs
-    loans_result = supabase.table("loans").select("loan_id").execute()
-    loan_ids = [r["loan_id"] for r in (loans_result.data or [])]
+    # Query payment_allocations table with pagination
+    all_allocations = []
+    page_size = 1000
+    offset = 0
 
-    if not loan_ids:
-        logger.warning("No loans found in database")
-        return {}
-
-    # Query each loan's schedule table in parallel
-    schedule_data: Dict[str, Dict[str, Dict]] = {}
-
-    def query_loan_schedule(loan_id: str) -> tuple[str, Dict[str, Dict]]:
-        """Query a single loan's schedule table."""
+    while True:
         try:
-            table_name = f"schedule_{loan_id}"
             result = (
-                supabase.table(table_name)
-                .select("actualpaymentdate, principalpaid, interestpaid, latefee")
-                .gte("actualpaymentdate", f"{start_date}T00:00:00Z")
-                .lte("actualpaymentdate", f"{end_date}T23:59:59Z")
+                supabase.table("payment_allocations")
+                .select("loan_id, payment_date, principal_allocated, interest_allocated, late_fee_allocated")
+                .gte("payment_date", start_date)
+                .lte("payment_date", end_date)
+                .range(offset, offset + page_size - 1)
                 .execute()
             )
 
-            date_totals: Dict[str, Dict] = {}
-            for row in (result.data or []):
-                raw_date = row.get("actualpaymentdate")
-                if not raw_date:
-                    continue
+            if not result.data:
+                break
 
-                # Parse date and format as YYYY-MM-DD
-                payment_date = raw_date[:10]  # Extract date portion
+            all_allocations.extend(result.data)
 
-                principal = float(row.get("principalpaid") or 0)
-                interest = float(row.get("interestpaid") or 0)
-                late_fee = float(row.get("latefee") or 0)
+            if len(result.data) < page_size:
+                break
 
-                # Aggregate if multiple rows on same date
-                if payment_date in date_totals:
-                    date_totals[payment_date]["principal"] += principal
-                    date_totals[payment_date]["interest"] += interest
-                    date_totals[payment_date]["late_fee"] += late_fee
-                    date_totals[payment_date]["total"] += principal + interest + late_fee
-                else:
-                    date_totals[payment_date] = {
-                        "principal": principal,
-                        "interest": interest,
-                        "late_fee": late_fee,
-                        "total": principal + interest + late_fee,
-                    }
-
-            return loan_id, date_totals
+            offset += page_size
 
         except Exception as e:
-            logger.warning(f"Failed to query schedule for loan {loan_id}: {e}")
-            return loan_id, {}
+            logger.error(f"Failed to query payment_allocations: {e}")
+            return {}
 
-    # Execute in parallel with max 10 workers
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(query_loan_schedule, lid): lid for lid in loan_ids}
-        for future in as_completed(futures):
-            loan_id, date_totals = future.result()
-            if date_totals:
-                schedule_data[loan_id] = date_totals
+    # Group by loan_id and payment_date
+    schedule_data: Dict[str, Dict[str, Dict]] = {}
+
+    for alloc in all_allocations:
+        loan_id = alloc["loan_id"]
+        raw_date = alloc.get("payment_date")
+        if not raw_date:
+            continue
+
+        # Extract date portion (handle both date and datetime formats)
+        payment_date = str(raw_date)[:10]
+
+        principal = float(alloc.get("principal_allocated") or 0)
+        interest = float(alloc.get("interest_allocated") or 0)
+        late_fee = float(alloc.get("late_fee_allocated") or 0)
+
+        if loan_id not in schedule_data:
+            schedule_data[loan_id] = {}
+
+        if payment_date in schedule_data[loan_id]:
+            schedule_data[loan_id][payment_date]["principal"] += principal
+            schedule_data[loan_id][payment_date]["interest"] += interest
+            schedule_data[loan_id][payment_date]["late_fee"] += late_fee
+            schedule_data[loan_id][payment_date]["total"] += principal + interest + late_fee
+        else:
+            schedule_data[loan_id][payment_date] = {
+                "principal": principal,
+                "interest": interest,
+                "late_fee": late_fee,
+                "total": principal + interest + late_fee,
+            }
 
     return schedule_data
 

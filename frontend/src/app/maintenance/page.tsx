@@ -174,7 +174,7 @@ export default function MaintenancePage() {
               <button
                 onClick={handleImportSchedules}
                 disabled={loading || importJob?.status === 'running'}
-                className="w-full px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
               >
                 {importJob?.status === 'running' ? 'Importing...' : 'Import Schedules from Google Drive'}
               </button>

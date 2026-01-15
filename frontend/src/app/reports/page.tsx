@@ -445,7 +445,7 @@ export default function ReportsPage() {
                           {formatHeader(header)}
                         </th>
                       ))}
-                      <th className="px-4 py-3 text-left text-xs font-medium text-blue-700 dark:text-blue-300 uppercase tracking-wider bg-blue-50 dark:bg-blue-900/20">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-blue-700 dark:text-blue-300 uppercase tracking-wider bg-blue-50 dark:bg-blue-900/30">
                         Total Received
                       </th>
                     </tr>
@@ -461,13 +461,13 @@ export default function ReportsPage() {
                             {formatCellValue(header, row[header])}
                           </td>
                         ))}
-                        <td className="px-4 py-3 text-sm font-semibold text-blue-700 dark:text-blue-300 whitespace-nowrap bg-blue-50 dark:bg-blue-900/20">
+                        <td className="px-4 py-3 text-sm font-semibold text-blue-700 dark:text-blue-300 whitespace-nowrap bg-blue-50 dark:bg-blue-900/30">
                           ${calculateRowTotal(row).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-blue-50 dark:bg-blue-900/20 border-t-2 border-blue-500 dark:border-blue-700">
+                  <tfoot className="bg-blue-50 dark:bg-blue-900/30 border-t-2 border-blue-500 dark:border-blue-700">
                     <tr>
                       {breakdown.headers.map((header, index) => (
                         <td

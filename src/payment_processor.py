@@ -17,6 +17,44 @@ THRESHOLD_RATIO = Decimal('0.90')  # require at least 90% of installment
 ### EXTRA_TOLERANCE = Decimal('20.00')  # only open next installment if at least 20 extra
 # (Changed to 50% of the next installment on 5/22/2025.)  # <-- preserved comment
 
+
+# -----------------------------
+# Payment Allocation Recording
+# -----------------------------
+def _record_allocation(sb, payment_log_id: int, loan_id: str, payment_date: str,
+                       payment_number: int, principal_amt: Decimal,
+                       interest_amt: Decimal, late_fee_amt: Decimal):
+    """
+    Record a payment allocation to the payment_allocations ledger.
+
+    This preserves the original payment_date for cash-basis reporting,
+    ensuring each payment appears in the correct month's report regardless
+    of when it was processed or when the installment was fully paid.
+
+    Args:
+        sb: Supabase client
+        payment_log_id: ID from payments_log table
+        loan_id: Loan identifier
+        payment_date: Original date payment was received (YYYY-MM-DD)
+        payment_number: Which installment this allocation applies to
+        principal_amt: Principal portion allocated from this payment
+        interest_amt: Interest portion allocated from this payment
+        late_fee_amt: Late fee portion allocated from this payment
+    """
+    try:
+        # Use upsert to handle re-processing scenarios (idempotent)
+        sb.table("payment_allocations").upsert({
+            "payment_log_id": payment_log_id,
+            "loan_id": loan_id,
+            "payment_date": payment_date,
+            "payment_number": payment_number,
+            "principal_allocated": float(principal_amt),
+            "interest_allocated": float(interest_amt),
+            "late_fee_allocated": float(late_fee_amt),
+        }, on_conflict="payment_log_id,payment_number").execute()
+    except Exception as e:
+        logger.warning(f"Failed to record allocation for payment {payment_log_id}: {e}")
+
 logging.getLogger("supabase._client").setLevel(logging.WARNING)
 logging.getLogger("postgrest.request_builder").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -273,6 +311,18 @@ def process_payments():
                     '''
                     sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
 
+                    # Record allocation for cash-basis reporting
+                    _record_allocation(
+                        sb=sb,
+                        payment_log_id=pid,
+                        loan_id=loan_id,
+                        payment_date=pay_date_str,
+                        payment_number=last_rownum,
+                        principal_amt=payment_amt,  # Entire payment is principal (curtailment)
+                        interest_amt=Decimal('0'),
+                        late_fee_amt=Decimal('0')
+                    )
+
                     # Bookkeeping so the payment finalizes cleanly (no further allocation)
                     allocation_done = True
                     payment_rows.append(last_rownum)
@@ -399,6 +449,24 @@ def process_payments():
                     '''
                     sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
 
+                    # Record allocation for cash-basis reporting
+                    # Calculate the INCREMENTAL amounts (what THIS payment contributed)
+                    prev_interest_paid = Decimal(str(row.get("interestpaid") or 0))
+                    incremental_principal = new_principal_paid - prev_principal_paid
+                    incremental_interest = new_interest_paid - prev_interest_paid
+                    incremental_latefee = new_latefee - prev_latefee
+
+                    _record_allocation(
+                        sb=sb,
+                        payment_log_id=pid,
+                        loan_id=loan_id,
+                        payment_date=pay_date_str,
+                        payment_number=row['paymentnumber'],
+                        principal_amt=incremental_principal,
+                        interest_amt=incremental_interest,
+                        late_fee_amt=incremental_latefee
+                    )
+
                     allocation_done = True
                     payment_rows.append(row['paymentnumber'])
                     applied_total += apply_amt
@@ -460,6 +528,24 @@ def process_payments():
                     '''
                     sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
 
+                    # Record allocation for cash-basis reporting
+                    # Calculate the INCREMENTAL amounts (what THIS payment contributed)
+                    prev_interest_paid = Decimal(str(row.get("interestpaid") or 0))
+                    incremental_principal = new_principal_paid - prev_principal_paid
+                    incremental_interest = new_interest_paid - prev_interest_paid
+                    incremental_latefee = new_latefee - prev_latefee
+
+                    _record_allocation(
+                        sb=sb,
+                        payment_log_id=pid,
+                        loan_id=loan_id,
+                        payment_date=pay_date_str,
+                        payment_number=row['paymentnumber'],
+                        principal_amt=incremental_principal,
+                        interest_amt=incremental_interest,
+                        late_fee_amt=incremental_latefee
+                    )
+
                     allocation_done = True
                     payment_rows.append(row['paymentnumber'])
                     applied_total += apply_amt
@@ -519,6 +605,18 @@ def process_payments():
                 WHERE nxt."paymentnumber" = {next_rownum};
                 '''
                 sb.rpc("run_sql", {"sql_text": adj_sql}).execute()
+
+                # Record the extra principal allocation for cash-basis reporting
+                _record_allocation(
+                    sb=sb,
+                    payment_log_id=pid,
+                    loan_id=loan_id,
+                    payment_date=pay_date_str,
+                    payment_number=last_rownum,
+                    principal_amt=remaining_amt,  # Entire leftover is principal
+                    interest_amt=Decimal('0'),
+                    late_fee_amt=Decimal('0')
+                )
 
                 # Reconciliation counters
                 applied_total += remaining_amt
