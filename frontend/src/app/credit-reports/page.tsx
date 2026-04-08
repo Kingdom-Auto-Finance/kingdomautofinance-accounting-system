@@ -405,6 +405,26 @@ export default function CreditReportsPage() {
             onDownloadReport={handleDownloadReport}
           />
         )}
+
+        {/* ── Run history ─────────────────────────────────────────── */}
+        {runs.length > 0 && (
+          <RunHistoryCard
+            runs={runs}
+            selectedRunId={currentRun?.run.id}
+            onSelectRun={async runId => {
+              try {
+                const detail = await creditReportAPI.getRun(runId);
+                setCurrentRun(detail);
+                setActiveBucket('ready');
+                document
+                  .getElementById('preview-section')
+                  ?.scrollIntoView({ behavior: 'smooth' });
+              } catch (e) {
+                setError(e instanceof Error ? e.message : 'Failed to load run');
+              }
+            }}
+          />
+        )}
       </div>
 
       {/* ── MongoDB export instructions modal ──────────────────────── */}
@@ -431,46 +451,96 @@ function StatusBanner({
   currentRun: RunDetail | null;
 }) {
   const latestFinal = runs.find(r => r.status === 'final');
+  const existingDraftsForCycle = currentRun
+    ? runs.filter(
+        r =>
+          r.status === 'draft' &&
+          r.cycle_month === currentRun.run.cycle_month &&
+          r.id !== currentRun.run.id
+      )
+    : [];
+
+  // Detect skipped-month: last finalized cycle is more than one month before
+  // the current run's cycle.
+  const skipNotice = useMemo(() => {
+    if (!currentRun || !latestFinal) return null;
+    const current = new Date(currentRun.run.cycle_month);
+    const prior = new Date(latestFinal.cycle_month);
+    if (isNaN(current.getTime()) || isNaN(prior.getTime())) return null;
+    const months =
+      (current.getFullYear() - prior.getFullYear()) * 12 +
+      (current.getMonth() - prior.getMonth());
+    if (months > 1) {
+      return `You skipped ${months - 1} cycle${months - 1 === 1 ? '' : 's'} between ${formatDate(latestFinal.cycle_month)} and this run. Continuity is being pulled from the ${formatDate(latestFinal.cycle_month)} cycle.`;
+    }
+    return null;
+  }, [currentRun, latestFinal]);
+
   return (
-    <div className="bg-card p-6 rounded-lg shadow border border-border">
-      <div className="flex items-start justify-between gap-6">
-        <div>
-          <div className="flex items-center gap-3 mb-2">
-            {currentRun ? (
-              <span
-                className={`px-3 py-1 rounded-full text-sm font-medium ${
-                  currentRun.run.status === 'final'
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-                    : currentRun.run.status === 'archived'
-                    ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
-                    : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                }`}
-              >
-                {currentRun.run.status.toUpperCase()}
-              </span>
+    <div className="space-y-3">
+      <div className="bg-card p-6 rounded-lg shadow border border-border">
+        <div className="flex items-start justify-between gap-6">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              {currentRun ? (
+                <span
+                  className={`px-3 py-1 rounded-full text-sm font-medium ${
+                    currentRun.run.status === 'final'
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                      : currentRun.run.status === 'archived'
+                      ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
+                      : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                  }`}
+                >
+                  {currentRun.run.status.toUpperCase()}
+                </span>
+              ) : (
+                <span className="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
+                  NOT STARTED
+                </span>
+              )}
+              <h2 className="text-xl font-semibold text-foreground">
+                {currentRun
+                  ? `Cycle ${currentRun.run.cycle_month}`
+                  : 'No active cycle'}
+              </h2>
+            </div>
+            {latestFinal ? (
+              <p className="text-sm text-muted-foreground">
+                Last finalized cycle: {formatDate(latestFinal.cycle_month)} —{' '}
+                {latestFinal.ready_count} accounts reported
+              </p>
             ) : (
-              <span className="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
-                NOT STARTED
-              </span>
+              <p className="text-sm text-muted-foreground">
+                No prior finalized cycles. Upload your first CSVs below to begin.
+              </p>
             )}
-            <h2 className="text-xl font-semibold text-foreground">
-              {currentRun
-                ? `Cycle ${currentRun.run.cycle_month}`
-                : 'No active cycle'}
-            </h2>
+            {currentRun?.run.note && (
+              <p className="text-xs text-muted-foreground mt-2 italic">
+                Audit note: {currentRun.run.note}
+              </p>
+            )}
           </div>
-          {latestFinal ? (
-            <p className="text-sm text-muted-foreground">
-              Last finalized cycle: {formatDate(latestFinal.cycle_month)} —{' '}
-              {latestFinal.ready_count} accounts
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No prior finalized cycles. Upload your first CSVs below to begin.
-            </p>
-          )}
         </div>
       </div>
+
+      {skipNotice && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 text-sm text-amber-800 dark:text-amber-300">{skipNotice}</div>
+        </div>
+      )}
+
+      {existingDraftsForCycle.length > 0 && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 flex items-start gap-3">
+          <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 text-sm text-blue-800 dark:text-blue-300">
+            {existingDraftsForCycle.length} other draft
+            {existingDraftsForCycle.length === 1 ? '' : 's'} exist for this cycle.
+            Use the run history panel at the bottom to switch between them.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1042,6 +1112,118 @@ function ValidationList({ validations }: { validations: Validation[] }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function RunHistoryCard({
+  runs,
+  selectedRunId,
+  onSelectRun,
+}: {
+  runs: RunSummary[];
+  selectedRunId?: string;
+  onSelectRun: (runId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="bg-card p-6 rounded-lg shadow border border-border">
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="flex items-center justify-between w-full text-left"
+      >
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">Run history</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {runs.length} recent run{runs.length === 1 ? '' : 's'}. Click any row
+            to view it in the preview above.
+          </p>
+        </div>
+        <span className="text-sm text-blue-600 hover:text-blue-700">
+          {expanded ? 'Collapse' : 'Expand'}
+        </span>
+      </button>
+      {expanded && (
+        <div className="mt-4 overflow-x-auto border border-border rounded-lg">
+          <table className="w-full">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">
+                  Cycle
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">
+                  Status
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">
+                  Ready
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">
+                  Review
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">
+                  Excluded
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">
+                  Carried
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">
+                  Finalized
+                </th>
+                <th className="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {runs.map(run => {
+                const isSelected = run.id === selectedRunId;
+                return (
+                  <tr
+                    key={run.id}
+                    className={`transition-colors ${
+                      isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-muted/30'
+                    }`}
+                  >
+                    <td className="px-4 py-3 text-sm text-foreground font-medium">
+                      {formatDate(run.cycle_month)}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      <span
+                        className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          run.status === 'final'
+                            ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300'
+                            : run.status === 'archived'
+                            ? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-400'
+                            : 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300'
+                        }`}
+                      >
+                        {run.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-foreground">{run.ready_count}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">{run.review_count}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">{run.excluded_count}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">
+                      {run.carried_over_count}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {run.finalized_at
+                        ? new Date(run.finalized_at).toLocaleString()
+                        : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => onSelectRun(run.id)}
+                        className="text-xs text-blue-600 hover:text-blue-700 underline"
+                      >
+                        {isSelected ? 'Selected' : 'View'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
