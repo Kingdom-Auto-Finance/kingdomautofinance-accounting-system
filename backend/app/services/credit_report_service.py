@@ -265,17 +265,45 @@ def create_draft_run(
         merged_df,
         forced_excluded_rows,
         forced_business_rows,
+        forced_consumer_rows,
         auto_applied_review_rows,
     ) = _apply_account_state_overrides(merged_df, state_map, as_of)
 
     # ── TRANSFORM ──────────────────────────────────────────────────────
     ready_df, review_df, excluded_df = engine.transform(merged_df, as_of)
 
-    # Reunite the forced rows (business manual_on → excluded, auto-applied
-    # review decisions → ready) with the engine's output.
+    # Reunite forced business-excluded rows with the engine's output.
     if forced_business_rows:
         forced_excl_df = pd.DataFrame(forced_business_rows)
         excluded_df = pd.concat([excluded_df, forced_excl_df], ignore_index=True)
+
+    # Merge forced-consumer rows (persistent manual_off) back into their
+    # proper buckets.
+    for fc in forced_consumer_rows:
+        source_row = fc["source"]
+        bucket = fc["bucket"]
+        if bucket == BUCKET_READY:
+            new_row = pd.DataFrame([fc["metro2_row"]], columns=list(engine.METRO2_COLUMNS))
+            ready_df = pd.concat([ready_df, new_row], ignore_index=True)
+        elif bucket == BUCKET_REVIEW:
+            new_row = pd.DataFrame([{
+                "deal_id": fc["deal_id"],
+                "clientName": str(source_row.get("clientName", "")),
+                "statusName": str(source_row.get("statusName", "")),
+                "loanAmount": source_row.get("loanAmount", ""),
+                "loanDate": source_row.get("loanDate", ""),
+                "daysPastDue": source_row.get("daysPastDue", ""),
+                "review_reason": fc.get("reason", ""),
+            }])
+            review_df = pd.concat([review_df, new_row], ignore_index=True)
+        else:
+            new_row = pd.DataFrame([{
+                "deal_id": fc["deal_id"],
+                "clientName": str(source_row.get("clientName", "")),
+                "statusName": str(source_row.get("statusName", "")),
+                "reason": fc.get("reason", ""),
+            }])
+            excluded_df = pd.concat([excluded_df, new_row], ignore_index=True)
 
     auto_applied_ready_rows: List[dict] = []
     auto_applied_excluded_rows: List[dict] = []
@@ -416,26 +444,31 @@ def _apply_account_state_overrides(
     merged_df: pd.DataFrame,
     state_map: Dict[str, Dict[str, Any]],
     as_of_date: str,
-) -> Tuple[pd.DataFrame, List[dict], List[dict], List[dict]]:
+) -> Tuple[pd.DataFrame, List[dict], List[dict], List[dict], List[dict]]:
     """Apply persistent state to the merged DataFrame prior to transform.
 
     Returns ``(filtered_df, forced_excluded_rows, forced_business_rows,
-    auto_applied_review_rows)``:
+    forced_consumer_rows, auto_applied_review_rows)``:
 
-    - ``filtered_df``: the input with force-flagged business / auto-applied
-      review rows REMOVED so the engine's transform doesn't double-count them.
-    - ``forced_business_rows``: accounts that must be excluded with reason
-      "Business override - manually flagged".
-    - ``auto_applied_review_rows``: dicts describing rows where a prior review
-      decision was silently re-applied. Each dict contains the rebuilt
-      metro2_row (for approve) or the exclusion info (for exclude).
+    - ``filtered_df``: the input with every override-handled row REMOVED so
+      the engine's transform doesn't process them again.
+    - ``forced_business_rows``: deals force-excluded by a persisted
+      ``is_business_override=True`` flag.
+    - ``forced_consumer_rows``: deals with ``is_business_override=False``
+      that would otherwise be caught by the engine's BUSINESS_PATTERN regex.
+      These are re-classified by statusName and land in the appropriate
+      bucket without the regex check.
+    - ``auto_applied_review_rows``: dicts describing rows where a prior
+      review decision was silently re-applied. Each dict contains the
+      rebuilt metro2_row (for approve) or the exclusion info (for exclude).
     """
     forced_excluded_rows: List[dict] = []
     forced_business_rows: List[dict] = []
+    forced_consumer_rows: List[dict] = []
     auto_applied_review_rows: List[dict] = []
 
     if merged_df is None or len(merged_df) == 0:
-        return merged_df, forced_excluded_rows, forced_business_rows, auto_applied_review_rows
+        return merged_df, forced_excluded_rows, forced_business_rows, forced_consumer_rows, auto_applied_review_rows
 
     drop_indices: List[int] = []
     for idx, row in merged_df.iterrows():
@@ -457,8 +490,51 @@ def _apply_account_state_overrides(
             })
             drop_indices.append(idx)
             continue
-        # override=False means "force consumer" - let it flow through normally
-        # (the engine's is_business regex is still bypassed via this path).
+
+        if override is False:
+            # Force-consumer path: bypass the is_business regex entirely.
+            # We still need to route by status (excluded / review / ready)
+            # so the row lands in the right bucket.
+            status_name = str(row.get("statusName", "")).strip()
+            if status_name in engine.EXCLUDED_STATUSES:
+                forced_consumer_rows.append({
+                    "deal_id": deal_id,
+                    "source": row,
+                    "bucket": BUCKET_EXCLUDED,
+                    "reason": f"Status is '{status_name}' - excluded per business rules",
+                })
+            elif status_name in engine.REVIEW_STATUSES:
+                review_reason = (
+                    "IN LEGAL - verify insurance claim / pending status before reporting"
+                    if status_name == "In Legal"
+                    else f"Status '{status_name}' requires manual Metro 2 code assignment and FCRA_DOFI date"
+                )
+                forced_consumer_rows.append({
+                    "deal_id": deal_id,
+                    "source": row,
+                    "bucket": BUCKET_REVIEW,
+                    "reason": review_reason,
+                })
+            elif (
+                status_name in engine.ACTIVE_STATUSES
+                or status_name in engine.CLOSED_STATUSES
+            ):
+                metro2_row = engine.build_metro2_row(row, as_of_date)
+                forced_consumer_rows.append({
+                    "deal_id": deal_id,
+                    "source": row,
+                    "bucket": BUCKET_READY,
+                    "metro2_row": metro2_row,
+                })
+            else:
+                forced_consumer_rows.append({
+                    "deal_id": deal_id,
+                    "source": row,
+                    "bucket": BUCKET_EXCLUDED,
+                    "reason": f"Unknown status '{status_name}'",
+                })
+            drop_indices.append(idx)
+            continue
 
         # ── Auto-apply prior review decision ───────────────────────────
         prior_decision = state.get("last_review_decision")
@@ -506,7 +582,7 @@ def _apply_account_state_overrides(
     else:
         filtered = merged_df
 
-    return filtered, forced_excluded_rows, forced_business_rows, auto_applied_review_rows
+    return filtered, forced_excluded_rows, forced_business_rows, forced_consumer_rows, auto_applied_review_rows
 
 
 def _build_carried_rows(

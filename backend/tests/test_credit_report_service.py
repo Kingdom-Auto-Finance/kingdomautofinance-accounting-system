@@ -540,6 +540,222 @@ class TestFinalizeRun:
             svc.finalize_run(run_id=result.run_id, force=True)
 
 
+class TestContinuityAndAutoApply:
+    """End-to-end tests for Step 9 (continuity carry-forward) and Step 10
+    (auto-apply prior review decisions on unchanged statusName)."""
+
+    def _finalize_cycle1(self, shim, cycle1_bytes) -> svc.DraftRunResult:
+        result = svc.create_draft_run(
+            deal_csv_bytes=cycle1_bytes["deal"],
+            deal_filename="deals_cycle1.csv",
+            address_csv_bytes=cycle1_bytes["address"],
+            address_filename="addresses_cycle1.csv",
+            cycle_month=date(2026, 3, 31),
+        )
+        return result
+
+    def test_continuity_carries_missing_account_forward(
+        self, supabase_shim, cycle1_bytes, cycle2_bytes
+    ):
+        # Cycle 1: finalize with 4 ready accounts (d001, d002, d003, d009)
+        r1 = self._finalize_cycle1(supabase_shim, cycle1_bytes)
+        svc.finalize_run(run_id=r1.run_id, force=True)
+
+        # Cycle 2: fixture is designed to have the SAME deal IDs in ready,
+        # so test the continuity logic by dropping d009 from the cycle2 upload.
+        import pandas as pd
+        import io
+
+        cycle2_df = pd.read_csv(io.BytesIO(cycle2_bytes["deal"]), dtype=str)
+        filtered = cycle2_df[cycle2_df["_id"] != "d009"]
+        deal_bytes_filtered = filtered.to_csv(index=False).encode("utf-8")
+
+        r2 = svc.create_draft_run(
+            deal_csv_bytes=deal_bytes_filtered,
+            deal_filename="deals_cycle2.csv",
+            address_csv_bytes=cycle2_bytes["address"],
+            address_filename="addresses_cycle2.csv",
+            cycle_month=date(2026, 4, 30),
+        )
+
+        # d009 (Eva Foster) should now be in the carried bucket
+        assert r2.carried_over_count >= 1
+        items = (
+            supabase_shim.table("credit_report_run_items")
+            .select("*")
+            .eq("run_id", r2.run_id)
+            .eq("deal_id", "d009")
+            .execute()
+            .data
+        )
+        assert len(items) == 1
+        assert items[0]["bucket"] == "carried"
+        assert items[0]["missing_from_upload"] is True
+        assert items[0]["was_in_prior_cycle"] is True
+
+    def test_continuity_emits_warning_validation(
+        self, supabase_shim, cycle1_bytes, cycle2_bytes
+    ):
+        r1 = self._finalize_cycle1(supabase_shim, cycle1_bytes)
+        svc.finalize_run(run_id=r1.run_id, force=True)
+
+        import pandas as pd
+        import io
+
+        cycle2_df = pd.read_csv(io.BytesIO(cycle2_bytes["deal"]), dtype=str)
+        filtered = cycle2_df[cycle2_df["_id"] != "d001"]
+        deal_bytes_filtered = filtered.to_csv(index=False).encode("utf-8")
+
+        r2 = svc.create_draft_run(
+            deal_csv_bytes=deal_bytes_filtered,
+            deal_filename="deals_cycle2.csv",
+            address_csv_bytes=cycle2_bytes["address"],
+            address_filename="addresses_cycle2.csv",
+            cycle_month=date(2026, 4, 30),
+        )
+        info = svc.get_run(r2.run_id)
+        codes = {v["code"] for v in info["validations"]}
+        assert "CARRIED_OVER" in codes
+
+    def test_auto_apply_unchanged_status(
+        self, supabase_shim, cycle1_bytes, cycle2_bytes
+    ):
+        # Cycle 1: approve d006 (In Legal) with code 64 + DOFI, finalize.
+        r1 = self._finalize_cycle1(supabase_shim, cycle1_bytes)
+        svc.set_review_decision(
+            run_id=r1.run_id,
+            deal_id="d006",
+            decision="approve",
+            metro2_status_code="64",
+            fcra_dofi="20251115",
+            note="Insurance claim pending",
+        )
+        svc.finalize_run(run_id=r1.run_id, force=True)
+
+        # Cycle 2: d006 is still "In Legal" → auto-apply should kick in.
+        r2 = svc.create_draft_run(
+            deal_csv_bytes=cycle2_bytes["deal"],
+            deal_filename="deals_cycle2.csv",
+            address_csv_bytes=cycle2_bytes["address"],
+            address_filename="addresses_cycle2.csv",
+            cycle_month=date(2026, 4, 30),
+        )
+
+        d006_item = (
+            supabase_shim.table("credit_report_run_items")
+            .select("*")
+            .eq("run_id", r2.run_id)
+            .eq("deal_id", "d006")
+            .execute()
+            .data[0]
+        )
+        # Prior decision auto-applied: should be in 'ready' bucket
+        assert d006_item["bucket"] == "ready"
+        assert d006_item["review_decision"] == "approve"
+        assert d006_item["metro2_row"]["AccountStatus"] == "64"
+        assert d006_item["metro2_row"]["FCRA_DOFI"] == "20251115"
+
+    def test_status_change_blocks_auto_apply(
+        self, supabase_shim, cycle1_bytes, cycle2_bytes
+    ):
+        # Cycle 1: approve d007 (Repossessed) with code 95, finalize.
+        r1 = self._finalize_cycle1(supabase_shim, cycle1_bytes)
+        svc.set_review_decision(
+            run_id=r1.run_id,
+            deal_id="d007",
+            decision="approve",
+            metro2_status_code="95",
+            fcra_dofi="20251015",
+        )
+        svc.finalize_run(run_id=r1.run_id, force=True)
+
+        # Cycle 2 fixture changes d007 from Repossessed → Write-Off.
+        # Auto-apply should NOT kick in; d007 goes back to review.
+        r2 = svc.create_draft_run(
+            deal_csv_bytes=cycle2_bytes["deal"],
+            deal_filename="deals_cycle2.csv",
+            address_csv_bytes=cycle2_bytes["address"],
+            address_filename="addresses_cycle2.csv",
+            cycle_month=date(2026, 4, 30),
+        )
+
+        d007_item = (
+            supabase_shim.table("credit_report_run_items")
+            .select("*")
+            .eq("run_id", r2.run_id)
+            .eq("deal_id", "d007")
+            .execute()
+            .data[0]
+        )
+        assert d007_item["bucket"] == "review"
+        # Should NOT have review_decision populated (they need to re-decide)
+        assert d007_item.get("review_decision") is None
+
+    def test_business_override_persists_across_cycles(
+        self, supabase_shim, cycle1_bytes, cycle2_bytes
+    ):
+        # Cycle 1: unflag d005 (Taqueria LLC) - auto-caught by regex, but
+        # operator marks it as consumer. Finalize to persist.
+        r1 = self._finalize_cycle1(supabase_shim, cycle1_bytes)
+        svc.set_business_flag(
+            run_id=r1.run_id, deal_id="d005", is_business=False
+        )
+        svc.finalize_run(run_id=r1.run_id, force=True)
+
+        # Cycle 2: d005 is still "Taqueria Los Amigos LLC" + Active. The
+        # persisted manual_off override should bypass the regex and land
+        # the row in the ready bucket.
+        r2 = svc.create_draft_run(
+            deal_csv_bytes=cycle2_bytes["deal"],
+            deal_filename="deals_cycle2.csv",
+            address_csv_bytes=cycle2_bytes["address"],
+            address_filename="addresses_cycle2.csv",
+            cycle_month=date(2026, 4, 30),
+        )
+
+        d005_item = (
+            supabase_shim.table("credit_report_run_items")
+            .select("*")
+            .eq("run_id", r2.run_id)
+            .eq("deal_id", "d005")
+            .execute()
+            .data[0]
+        )
+        assert d005_item["bucket"] == "ready"
+        assert d005_item["business_flag_source"] == "manual_off"
+
+    def test_business_override_on_persists_across_cycles(
+        self, supabase_shim, cycle1_bytes, cycle2_bytes
+    ):
+        # Cycle 1: manually flag d001 (John Smith, Active) as business.
+        r1 = self._finalize_cycle1(supabase_shim, cycle1_bytes)
+        svc.set_business_flag(
+            run_id=r1.run_id, deal_id="d001", is_business=True
+        )
+        svc.finalize_run(run_id=r1.run_id, force=True)
+
+        # Cycle 2: even though regex would not catch John Smith, persisted
+        # manual_on should force d001 into excluded.
+        r2 = svc.create_draft_run(
+            deal_csv_bytes=cycle2_bytes["deal"],
+            deal_filename="deals_cycle2.csv",
+            address_csv_bytes=cycle2_bytes["address"],
+            address_filename="addresses_cycle2.csv",
+            cycle_month=date(2026, 4, 30),
+        )
+
+        d001_item = (
+            supabase_shim.table("credit_report_run_items")
+            .select("*")
+            .eq("run_id", r2.run_id)
+            .eq("deal_id", "d001")
+            .execute()
+            .data[0]
+        )
+        assert d001_item["bucket"] == "excluded"
+        assert "Business override" in (d001_item.get("reason") or "")
+
+
 class TestRenderReportTxt:
     def test_report_includes_counts(self, supabase_shim, cycle1_bytes):
         result = svc.create_draft_run(
