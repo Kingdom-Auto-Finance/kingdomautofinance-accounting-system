@@ -1,0 +1,930 @@
+"""Credit Report service - Metro 2 cycle workflow.
+
+Orchestrates the Credit Report page feature: CSV upload parsing, engine
+invocation, decision persistence, and CSV rendering. Delegates all Metro 2
+business rules to ``app.libs.metro2_engine``.
+
+See /root/.claude/plans/swift-dancing-aho.md for the design rationale.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import io
+import logging
+import re
+from calendar import monthrange
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+import pandas as pd
+
+from app.db.supabase_client import get_supabase_client
+from app.libs import metro2_engine as engine
+
+logger = logging.getLogger(__name__)
+
+# Upper bound on preview pagination. Keeps accidental page_size=10000 requests
+# from blowing up the API.
+MAX_PAGE_SIZE = 500
+
+# Buckets enum - mirrors the CHECK constraint on credit_report_run_items.
+BUCKET_READY = "ready"
+BUCKET_REVIEW = "review"
+BUCKET_EXCLUDED = "excluded"
+BUCKET_CARRIED = "carried"
+ALL_BUCKETS = (BUCKET_READY, BUCKET_REVIEW, BUCKET_EXCLUDED, BUCKET_CARRIED)
+
+
+# ─── UTILITIES ───────────────────────────────────────────────────────────────
+def _month_end(cycle_month: str | date) -> date:
+    """Return the last day of the month for a given date.
+
+    Accepts either a date or an ISO string. The Credit Report feature always
+    stores cycle_month as month-end for consistency with Metro 2's as-of date.
+    """
+    if isinstance(cycle_month, str):
+        d = date.fromisoformat(cycle_month)
+    else:
+        d = cycle_month
+    last = monthrange(d.year, d.month)[1]
+    return date(d.year, d.month, last)
+
+
+def _as_of_date_str(cycle_month: date) -> str:
+    """Convert a month-end date to the Metro 2 YYYYMMDD string."""
+    return cycle_month.strftime("%Y%m%d")
+
+
+def _default_cycle_month() -> date:
+    """Return the last day of the prior calendar month."""
+    today = date.today()
+    first_of_month = today.replace(day=1)
+    last_month = first_of_month - pd.Timedelta(days=1)
+    return _month_end(date(last_month.year, last_month.month, 1))
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _normalize_status_name(status_name: Any) -> str:
+    """Normalize a MongoDB statusName for the auto-apply equality gate.
+
+    Uses case-insensitive comparison with whitespace collapsed to a single
+    space. Centralized here so a future refinement (e.g. fuzzy match, alias
+    table) only touches one place.
+    """
+    if status_name is None:
+        return ""
+    s = re.sub(r"\s+", " ", str(status_name)).strip().lower()
+    return s
+
+
+def _status_names_equal(a: Any, b: Any) -> bool:
+    """Return True when two statusName values should be treated as identical."""
+    return _normalize_status_name(a) == _normalize_status_name(b)
+
+
+def _row_to_jsonable(row: Any) -> Dict[str, Any]:
+    """Convert a pandas Series (or dict) into a JSON-serializable dict.
+
+    Pandas NaN/NaT/Timestamps don't round-trip through JSONB cleanly, so we
+    coerce to plain Python types and replace NaN with None.
+    """
+    if hasattr(row, "to_dict"):
+        data = row.to_dict()
+    else:
+        data = dict(row)
+    out: Dict[str, Any] = {}
+    for k, v in data.items():
+        if v is None:
+            out[k] = None
+        elif isinstance(v, float) and pd.isna(v):
+            out[k] = None
+        elif isinstance(v, (pd.Timestamp, datetime, date)):
+            out[k] = v.isoformat() if not pd.isna(v) else None
+        elif hasattr(v, "item"):  # numpy scalar
+            try:
+                out[k] = v.item()
+            except Exception:
+                out[k] = str(v)
+        else:
+            out[k] = v
+    return out
+
+
+# ─── UPLOAD PERSISTENCE ──────────────────────────────────────────────────────
+def _persist_upload(
+    *,
+    kind: str,
+    filename: str,
+    content: bytes,
+    row_count: int,
+    user_id: Optional[str],
+) -> str:
+    """Insert a credit_report_uploads row and return its UUID."""
+    supabase = get_supabase_client()
+    payload = {
+        "kind": kind,
+        "original_filename": filename,
+        "byte_size": len(content),
+        "sha256": _sha256(content),
+        "row_count": row_count,
+        "content_b64": base64.b64encode(content).decode("ascii"),
+        "uploaded_by": user_id,
+    }
+    result = supabase.table("credit_report_uploads").insert(payload).execute()
+    return result.data[0]["id"]
+
+
+def _load_upload_csv(upload_id: str) -> pd.DataFrame:
+    """Re-hydrate a stored upload back into a pandas DataFrame."""
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("credit_report_uploads")
+        .select("content_b64")
+        .eq("id", upload_id)
+        .single()
+        .execute()
+    )
+    content = base64.b64decode(result.data["content_b64"])
+    return pd.read_csv(io.BytesIO(content), dtype=str)
+
+
+# ─── ACCOUNT STATE HELPERS ───────────────────────────────────────────────────
+def _load_account_state_map(deal_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch credit_report_account_state rows for a list of deal_ids.
+
+    Returns a dict keyed by ``deal_id``. Supabase's query builder caps
+    ``in_()`` clauses at ~1000 items, so we page in chunks.
+    """
+    if not deal_ids:
+        return {}
+
+    supabase = get_supabase_client()
+    state_map: Dict[str, Dict[str, Any]] = {}
+    chunk_size = 500
+
+    for i in range(0, len(deal_ids), chunk_size):
+        chunk = deal_ids[i : i + chunk_size]
+        result = (
+            supabase.table("credit_report_account_state")
+            .select("*")
+            .in_("deal_id", chunk)
+            .execute()
+        )
+        for row in result.data or []:
+            state_map[row["deal_id"]] = row
+    return state_map
+
+
+# ─── DRAFT RUN CREATION ──────────────────────────────────────────────────────
+@dataclass
+class DraftRunResult:
+    run_id: str
+    ready_count: int
+    review_count: int
+    excluded_count: int
+    carried_over_count: int
+
+
+def create_draft_run(
+    *,
+    deal_csv_bytes: bytes,
+    deal_filename: str,
+    address_csv_bytes: bytes,
+    address_filename: str,
+    cycle_month: Optional[date] = None,
+    user_id: Optional[str] = None,
+) -> DraftRunResult:
+    """Create a new draft run from two uploaded CSVs.
+
+    Steps:
+      1. Persist both uploads for lineage/forensics.
+      2. Parse + merge them via the engine.
+      3. Load persisted account state for every deal_id.
+      4. Apply business-flag overrides and auto-apply prior review decisions
+         where the MongoDB statusName is unchanged.
+      5. Transform → ready / review / excluded DataFrames.
+      6. Add continuity ``carried`` rows for prior-cycle deals missing from
+         this upload.
+      7. Persist the run, its items, and its validation findings.
+    """
+    if cycle_month is None:
+        cycle_month = _default_cycle_month()
+    cycle_month = _month_end(cycle_month)
+    as_of = _as_of_date_str(cycle_month)
+
+    supabase = get_supabase_client()
+
+    # ── PARSE UPLOADS ──────────────────────────────────────────────────
+    deals_df = pd.read_csv(io.BytesIO(deal_csv_bytes), dtype=str)
+    addresses_df = (
+        pd.read_csv(io.BytesIO(address_csv_bytes), dtype=str)
+        if address_csv_bytes
+        else None
+    )
+
+    deal_upload_id = _persist_upload(
+        kind="deal",
+        filename=deal_filename,
+        content=deal_csv_bytes,
+        row_count=len(deals_df),
+        user_id=user_id,
+    )
+    address_upload_id = _persist_upload(
+        kind="address",
+        filename=address_filename,
+        content=address_csv_bytes,
+        row_count=len(addresses_df) if addresses_df is not None else 0,
+        user_id=user_id,
+    )
+
+    # ── MERGE ──────────────────────────────────────────────────────────
+    merged_df, merge_findings = engine.merge_deals_addresses(deals_df, addresses_df)
+
+    # ── LOAD PERSISTENT STATE ──────────────────────────────────────────
+    # For prior-cycle continuity AND for auto-apply, we need state for the
+    # union of: (a) deals in this upload, (b) deals reported in the prior
+    # final cycle.
+    current_deal_ids = [
+        str(x) for x in merged_df.get("_id", pd.Series(dtype=str)).tolist() if x
+    ]
+    prior_final_run = _find_prior_final_run(cycle_month)
+    prior_deal_ids: List[str] = []
+    if prior_final_run:
+        prior_deal_ids = _load_prior_ready_deal_ids(prior_final_run["id"])
+
+    state_deal_ids = list(set(current_deal_ids) | set(prior_deal_ids))
+    state_map = _load_account_state_map(state_deal_ids)
+
+    # ── APPLY BUSINESS OVERRIDES + AUTO-APPLY REVIEW DECISIONS ─────────
+    (
+        merged_df,
+        forced_excluded_rows,
+        forced_business_rows,
+        auto_applied_review_rows,
+    ) = _apply_account_state_overrides(merged_df, state_map, as_of)
+
+    # ── TRANSFORM ──────────────────────────────────────────────────────
+    ready_df, review_df, excluded_df = engine.transform(merged_df, as_of)
+
+    # Reunite the forced rows (business manual_on → excluded, auto-applied
+    # review decisions → ready) with the engine's output.
+    if forced_business_rows:
+        forced_excl_df = pd.DataFrame(forced_business_rows)
+        excluded_df = pd.concat([excluded_df, forced_excl_df], ignore_index=True)
+
+    auto_applied_ready_rows: List[dict] = []
+    auto_applied_excluded_rows: List[dict] = []
+    for auto_item in auto_applied_review_rows:
+        if auto_item["decision"] == "approve":
+            auto_applied_ready_rows.append(auto_item["metro2_row"])
+        elif auto_item["decision"] == "exclude":
+            auto_applied_excluded_rows.append({
+                "deal_id": auto_item["deal_id"],
+                "clientName": auto_item["client_name"],
+                "statusName": auto_item["status_name"],
+                "reason": f"Auto-applied prior review decision: exclude ({auto_item.get('note','')})",
+            })
+
+    if auto_applied_ready_rows:
+        ready_df = pd.concat(
+            [ready_df, pd.DataFrame(auto_applied_ready_rows, columns=list(engine.METRO2_COLUMNS))],
+            ignore_index=True,
+        )
+    if auto_applied_excluded_rows:
+        excluded_df = pd.concat(
+            [excluded_df, pd.DataFrame(auto_applied_excluded_rows)],
+            ignore_index=True,
+        )
+
+    # ── CONTINUITY ─────────────────────────────────────────────────────
+    # Any deal_id reported in the prior final cycle that is missing from the
+    # current upload AND not overridden by an exclusion gets pulled forward
+    # into the 'carried' bucket with the prior snapshot.
+    carried_rows: List[Dict[str, Any]] = []
+    if prior_final_run:
+        current_ids_set = set(current_deal_ids)
+        missing_ids = [d for d in prior_deal_ids if d not in current_ids_set]
+        if missing_ids:
+            carried_rows = _build_carried_rows(
+                prior_run_id=prior_final_run["id"],
+                missing_deal_ids=missing_ids,
+                state_map=state_map,
+            )
+
+    # ── VALIDATE ───────────────────────────────────────────────────────
+    validation_findings = list(merge_findings) + list(
+        engine.validate(ready_df, min_accounts=100, enforce_minimum=False)
+    )
+    if carried_rows:
+        validation_findings.append(
+            engine.ValidationFinding(
+                severity="WARNING",
+                code="CARRIED_OVER",
+                message=(
+                    f"{len(carried_rows)} accounts reported in prior cycle are "
+                    "missing from this upload - verify MongoDB data before finalizing"
+                ),
+                affected_count=len(carried_rows),
+            )
+        )
+    if auto_applied_review_rows:
+        validation_findings.append(
+            engine.ValidationFinding(
+                severity="INFO",
+                code="AUTO_APPLIED_REVIEW",
+                message=(
+                    f"{len(auto_applied_review_rows)} review-status accounts had prior "
+                    "decisions auto-applied (statusName unchanged)"
+                ),
+                affected_count=len(auto_applied_review_rows),
+            )
+        )
+
+    # ── INSERT run + items + validations ───────────────────────────────
+    run_payload = {
+        "cycle_month": cycle_month.isoformat(),
+        "status": "draft",
+        "as_of_date_str": as_of,
+        "ready_count": len(ready_df),
+        "review_count": len(review_df),
+        "excluded_count": len(excluded_df),
+        "carried_over_count": len(carried_rows),
+        "deal_upload_id": deal_upload_id,
+        "address_upload_id": address_upload_id,
+        "created_by": user_id,
+    }
+    run_result = supabase.table("credit_report_runs").insert(run_payload).execute()
+    run_id = run_result.data[0]["id"]
+
+    _bulk_insert_run_items(
+        run_id=run_id,
+        merged_df=merged_df,
+        ready_df=ready_df,
+        review_df=review_df,
+        excluded_df=excluded_df,
+        carried_rows=carried_rows,
+        state_map=state_map,
+        auto_applied_review_rows=auto_applied_review_rows,
+    )
+
+    _bulk_insert_validations(run_id, validation_findings)
+
+    return DraftRunResult(
+        run_id=run_id,
+        ready_count=len(ready_df),
+        review_count=len(review_df),
+        excluded_count=len(excluded_df),
+        carried_over_count=len(carried_rows),
+    )
+
+
+# ─── INTERNAL HELPERS ────────────────────────────────────────────────────────
+def _find_prior_final_run(cycle_month: date) -> Optional[Dict[str, Any]]:
+    """Return the most recent 'final' run strictly before ``cycle_month``."""
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("credit_report_runs")
+        .select("id, cycle_month")
+        .eq("status", "final")
+        .lt("cycle_month", cycle_month.isoformat())
+        .order("cycle_month", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def _load_prior_ready_deal_ids(prior_run_id: str) -> List[str]:
+    """Return deal_ids that were in the 'ready' or 'carried' buckets of a run."""
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("credit_report_run_items")
+        .select("deal_id")
+        .eq("run_id", prior_run_id)
+        .in_("bucket", [BUCKET_READY, BUCKET_CARRIED])
+        .execute()
+    )
+    return [r["deal_id"] for r in result.data or []]
+
+
+def _apply_account_state_overrides(
+    merged_df: pd.DataFrame,
+    state_map: Dict[str, Dict[str, Any]],
+    as_of_date: str,
+) -> Tuple[pd.DataFrame, List[dict], List[dict], List[dict]]:
+    """Apply persistent state to the merged DataFrame prior to transform.
+
+    Returns ``(filtered_df, forced_excluded_rows, forced_business_rows,
+    auto_applied_review_rows)``:
+
+    - ``filtered_df``: the input with force-flagged business / auto-applied
+      review rows REMOVED so the engine's transform doesn't double-count them.
+    - ``forced_business_rows``: accounts that must be excluded with reason
+      "Business override - manually flagged".
+    - ``auto_applied_review_rows``: dicts describing rows where a prior review
+      decision was silently re-applied. Each dict contains the rebuilt
+      metro2_row (for approve) or the exclusion info (for exclude).
+    """
+    forced_excluded_rows: List[dict] = []
+    forced_business_rows: List[dict] = []
+    auto_applied_review_rows: List[dict] = []
+
+    if merged_df is None or len(merged_df) == 0:
+        return merged_df, forced_excluded_rows, forced_business_rows, auto_applied_review_rows
+
+    drop_indices: List[int] = []
+    for idx, row in merged_df.iterrows():
+        deal_id = str(row.get("_id", "")).strip()
+        if not deal_id:
+            continue
+        state = state_map.get(deal_id)
+        if not state:
+            continue
+
+        # ── Business override ──────────────────────────────────────────
+        override = state.get("is_business_override")
+        if override is True:
+            forced_business_rows.append({
+                "deal_id": deal_id,
+                "clientName": str(row.get("clientName", "")),
+                "statusName": str(row.get("statusName", "")),
+                "reason": "Business override - manually flagged as business",
+            })
+            drop_indices.append(idx)
+            continue
+        # override=False means "force consumer" - let it flow through normally
+        # (the engine's is_business regex is still bypassed via this path).
+
+        # ── Auto-apply prior review decision ───────────────────────────
+        prior_decision = state.get("last_review_decision")
+        prior_status_name = state.get("last_review_status_name")
+        current_status_name = str(row.get("statusName", ""))
+
+        if (
+            prior_decision
+            and prior_status_name
+            and current_status_name in engine.REVIEW_STATUSES
+            and _status_names_equal(current_status_name, prior_status_name)
+        ):
+            if prior_decision == "approve":
+                metro2_row = engine.build_metro2_row(
+                    row,
+                    as_of_date,
+                    account_status_override=state.get("last_review_metro2_status_code") or None,
+                    fcra_dofi_override=state.get("last_review_fcra_dofi") or None,
+                )
+                auto_applied_review_rows.append({
+                    "deal_id": deal_id,
+                    "decision": "approve",
+                    "metro2_row": metro2_row,
+                    "metro2_status_code": state.get("last_review_metro2_status_code"),
+                    "fcra_dofi": state.get("last_review_fcra_dofi"),
+                    "note": state.get("last_review_note"),
+                    "status_name": current_status_name,
+                    "client_name": str(row.get("clientName", "")),
+                })
+                drop_indices.append(idx)
+            elif prior_decision == "exclude":
+                auto_applied_review_rows.append({
+                    "deal_id": deal_id,
+                    "decision": "exclude",
+                    "metro2_row": None,
+                    "note": state.get("last_review_note"),
+                    "status_name": current_status_name,
+                    "client_name": str(row.get("clientName", "")),
+                })
+                drop_indices.append(idx)
+            # For 'defer', we let it flow into the review bucket naturally.
+
+    if drop_indices:
+        filtered = merged_df.drop(index=drop_indices).reset_index(drop=True)
+    else:
+        filtered = merged_df
+
+    return filtered, forced_excluded_rows, forced_business_rows, auto_applied_review_rows
+
+
+def _build_carried_rows(
+    *,
+    prior_run_id: str,
+    missing_deal_ids: List[str],
+    state_map: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build 'carried' bucket rows for prior-cycle deals missing from current upload.
+
+    Pulls the prior run's source_row and metro2_row snapshot and marks them
+    with ``missing_from_upload=True``. The operator sees a "stale data - last
+    seen {cycle}" label in the UI.
+    """
+    if not missing_deal_ids:
+        return []
+
+    supabase = get_supabase_client()
+    chunk_size = 500
+    carried: List[Dict[str, Any]] = []
+    for i in range(0, len(missing_deal_ids), chunk_size):
+        chunk = missing_deal_ids[i : i + chunk_size]
+        result = (
+            supabase.table("credit_report_run_items")
+            .select("deal_id, source_row, metro2_row")
+            .eq("run_id", prior_run_id)
+            .in_("deal_id", chunk)
+            .execute()
+        )
+        for row in result.data or []:
+            # Skip deals that have been force-excluded via manual business flag
+            state = state_map.get(row["deal_id"])
+            if state and state.get("is_business_override") is True:
+                continue
+            carried.append({
+                "deal_id": row["deal_id"],
+                "source_row": row["source_row"],
+                "metro2_row": row.get("metro2_row"),
+            })
+    return carried
+
+
+def _bulk_insert_run_items(
+    *,
+    run_id: str,
+    merged_df: pd.DataFrame,
+    ready_df: pd.DataFrame,
+    review_df: pd.DataFrame,
+    excluded_df: pd.DataFrame,
+    carried_rows: List[Dict[str, Any]],
+    state_map: Dict[str, Dict[str, Any]],
+    auto_applied_review_rows: List[dict],
+) -> None:
+    """Insert credit_report_run_items rows for this run.
+
+    Supabase's Python client has no first-class bulk upsert for our shape, so
+    we batch rows into ~500-row chunks via ``insert``.
+    """
+    supabase = get_supabase_client()
+    prior_cycle_ids = {
+        dst["deal_id"] for dst in state_map.values() if dst.get("last_reported_cycle")
+    }
+
+    # Index the merged source rows by deal_id for lookup.
+    source_by_id: Dict[str, Dict[str, Any]] = {}
+    if "_id" in merged_df.columns:
+        for _, r in merged_df.iterrows():
+            source_by_id[str(r["_id"]).strip()] = _row_to_jsonable(r)
+
+    items: List[Dict[str, Any]] = []
+
+    # ── Ready bucket ───────────────────────────────────────────────────
+    auto_applied_ids = {x["deal_id"] for x in auto_applied_review_rows if x["decision"] == "approve"}
+    for _, r in ready_df.iterrows():
+        deal_id = str(r.get("ConsumerAccountNumber", "")).strip()
+        if not deal_id:
+            continue
+        source = source_by_id.get(deal_id, {})
+        state = state_map.get(deal_id) or {}
+        is_auto_applied = deal_id in auto_applied_ids
+
+        item: Dict[str, Any] = {
+            "run_id": run_id,
+            "deal_id": deal_id,
+            "bucket": BUCKET_READY,
+            "source_row": source,
+            "metro2_row": _row_to_jsonable(r),
+            "business_flag_source": _business_flag_source(source, state),
+            "was_in_prior_cycle": deal_id in prior_cycle_ids,
+            "missing_from_upload": False,
+        }
+        if is_auto_applied:
+            auto_row = next(x for x in auto_applied_review_rows if x["deal_id"] == deal_id)
+            item["review_decision"] = "approve"
+            item["review_metro2_status_code"] = auto_row.get("metro2_status_code")
+            item["review_fcra_dofi"] = auto_row.get("fcra_dofi")
+            item["review_note"] = auto_row.get("note")
+        items.append(item)
+
+    # ── Review bucket ──────────────────────────────────────────────────
+    for _, r in review_df.iterrows():
+        deal_id = str(r.get("deal_id", "")).strip()
+        if not deal_id:
+            continue
+        source = source_by_id.get(deal_id, {})
+        state = state_map.get(deal_id) or {}
+        items.append({
+            "run_id": run_id,
+            "deal_id": deal_id,
+            "bucket": BUCKET_REVIEW,
+            "reason": r.get("review_reason"),
+            "source_row": source,
+            "metro2_row": None,
+            "business_flag_source": _business_flag_source(source, state),
+            "was_in_prior_cycle": deal_id in prior_cycle_ids,
+            "missing_from_upload": False,
+        })
+
+    # ── Excluded bucket ────────────────────────────────────────────────
+    for _, r in excluded_df.iterrows():
+        deal_id = str(r.get("deal_id", "")).strip()
+        if not deal_id:
+            continue
+        source = source_by_id.get(deal_id, {})
+        state = state_map.get(deal_id) or {}
+        items.append({
+            "run_id": run_id,
+            "deal_id": deal_id,
+            "bucket": BUCKET_EXCLUDED,
+            "reason": r.get("reason"),
+            "source_row": source,
+            "metro2_row": None,
+            "business_flag_source": _business_flag_source(source, state),
+            "was_in_prior_cycle": deal_id in prior_cycle_ids,
+            "missing_from_upload": False,
+        })
+
+    # ── Carried bucket (deals reported last cycle but missing now) ─────
+    for c in carried_rows:
+        deal_id = c["deal_id"]
+        items.append({
+            "run_id": run_id,
+            "deal_id": deal_id,
+            "bucket": BUCKET_CARRIED,
+            "reason": "Reported in prior cycle but missing from current upload",
+            "source_row": c["source_row"],
+            "metro2_row": c.get("metro2_row"),
+            "was_in_prior_cycle": True,
+            "missing_from_upload": True,
+        })
+
+    # Deduplicate by deal_id in case a row slipped into multiple buckets
+    # (e.g. force-excluded account also mentioned in carried). The unique
+    # constraint on (run_id, deal_id) would otherwise reject the insert.
+    seen_ids: set = set()
+    deduped: List[Dict[str, Any]] = []
+    for item in items:
+        if item["deal_id"] in seen_ids:
+            continue
+        seen_ids.add(item["deal_id"])
+        deduped.append(_normalize_run_item(item, run_id))
+
+    if not deduped:
+        return
+
+    # Batch insert to avoid payload size limits.
+    batch = 500
+    for i in range(0, len(deduped), batch):
+        supabase.table("credit_report_run_items").insert(deduped[i : i + batch]).execute()
+
+
+# Canonical column set for credit_report_run_items inserts. Every row sent to
+# the DB must have exactly these keys (with None for missing values) so the
+# Supabase Python client's bulk insert has a consistent shape.
+_RUN_ITEM_COLUMNS = (
+    "run_id",
+    "deal_id",
+    "bucket",
+    "reason",
+    "source_row",
+    "metro2_row",
+    "review_decision",
+    "review_metro2_status_code",
+    "review_fcra_dofi",
+    "review_note",
+    "business_flag_source",
+    "was_in_prior_cycle",
+    "missing_from_upload",
+)
+
+
+def _normalize_run_item(item: Dict[str, Any], run_id: str) -> Dict[str, Any]:
+    """Fill in missing keys with None so every inserted row has the same shape."""
+    out: Dict[str, Any] = {col: item.get(col) for col in _RUN_ITEM_COLUMNS}
+    out["run_id"] = run_id
+    # Coerce booleans (None → False for the NOT NULL columns).
+    out["was_in_prior_cycle"] = bool(out.get("was_in_prior_cycle") or False)
+    out["missing_from_upload"] = bool(out.get("missing_from_upload") or False)
+    return out
+
+
+def _business_flag_source(source: Dict[str, Any], state: Dict[str, Any]) -> Optional[str]:
+    """Derive the business_flag_source for a run_item."""
+    override = state.get("is_business_override") if state else None
+    if override is True:
+        return "manual_on"
+    if override is False:
+        return "manual_off"
+    client_name = source.get("clientName", "") if source else ""
+    if engine.is_business(client_name):
+        return "auto"
+    return None
+
+
+def _bulk_insert_validations(
+    run_id: str, findings: List[engine.ValidationFinding]
+) -> None:
+    """Persist validation findings for a run."""
+    if not findings:
+        return
+    supabase = get_supabase_client()
+    payloads = [
+        {
+            "run_id": run_id,
+            "severity": f.severity,
+            "code": f.code,
+            "message": f.message,
+            "affected_count": f.affected_count,
+        }
+        for f in findings
+    ]
+    supabase.table("credit_report_validations").insert(payloads).execute()
+
+
+# ─── READ-ONLY QUERIES ───────────────────────────────────────────────────────
+def get_run(run_id: str) -> Dict[str, Any]:
+    """Return the run header plus its validation findings."""
+    supabase = get_supabase_client()
+    run_result = (
+        supabase.table("credit_report_runs")
+        .select("*")
+        .eq("id", run_id)
+        .single()
+        .execute()
+    )
+    val_result = (
+        supabase.table("credit_report_validations")
+        .select("*")
+        .eq("run_id", run_id)
+        .order("severity")
+        .execute()
+    )
+    return {
+        "run": run_result.data,
+        "validations": val_result.data or [],
+    }
+
+
+def list_runs(limit: int = 20) -> List[Dict[str, Any]]:
+    """Return the N most recent runs (draft + final + archived), newest first."""
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("credit_report_runs")
+        .select("*")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
+
+
+def list_run_items(
+    run_id: str,
+    bucket: Optional[str] = None,
+    q: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 100,
+) -> Dict[str, Any]:
+    """Return paginated run_items filtered by bucket and optional substring.
+
+    ``q`` searches across ``deal_id`` and the JSONB ``source_row->>clientName``.
+    """
+    page = max(1, page)
+    page_size = max(1, min(MAX_PAGE_SIZE, page_size))
+
+    supabase = get_supabase_client()
+    query = (
+        supabase.table("credit_report_run_items")
+        .select("*", count="exact")
+        .eq("run_id", run_id)
+    )
+    if bucket:
+        if bucket not in ALL_BUCKETS:
+            raise ValueError(f"Invalid bucket '{bucket}'")
+        query = query.eq("bucket", bucket)
+
+    # Search: deal_id prefix OR clientName ilike. Supabase's or_ needs the
+    # JSONB path expressed as source_row->>clientName.
+    if q:
+        like = f"%{q}%"
+        query = query.or_(
+            f"deal_id.ilike.{like},source_row->>clientName.ilike.{like}"
+        )
+
+    start = (page - 1) * page_size
+    end = start + page_size - 1
+    result = query.order("deal_id").range(start, end).execute()
+
+    return {
+        "data": result.data or [],
+        "page": page,
+        "page_size": page_size,
+        "total": result.count or 0,
+    }
+
+
+# ─── CSV RENDERING ───────────────────────────────────────────────────────────
+def render_csv(run_id: str, bucket: str) -> str:
+    """Rebuild a CSV for a run+bucket on demand from credit_report_run_items.
+
+    For the 'ready' bucket, emits the 42 Metro 2 columns in canonical order.
+    For 'review' / 'excluded' / 'carried', emits an audit-friendly layout with
+    deal_id, clientName, statusName, reason, and any decision metadata.
+    """
+    if bucket not in ALL_BUCKETS:
+        raise ValueError(f"Invalid bucket '{bucket}'")
+
+    supabase = get_supabase_client()
+    # Paginate through items so we don't exceed the 1000-row default limit.
+    rows: List[Dict[str, Any]] = []
+    offset = 0
+    page_size = 1000
+    while True:
+        result = (
+            supabase.table("credit_report_run_items")
+            .select("*")
+            .eq("run_id", run_id)
+            .eq("bucket", bucket)
+            .order("deal_id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = result.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    if bucket == BUCKET_READY:
+        records = [r.get("metro2_row") or {} for r in rows]
+        df = pd.DataFrame(records, columns=list(engine.METRO2_COLUMNS))
+    else:
+        records = []
+        for r in rows:
+            source = r.get("source_row") or {}
+            records.append({
+                "deal_id": r.get("deal_id"),
+                "clientName": source.get("clientName", ""),
+                "statusName": source.get("statusName", ""),
+                "loanAmount": source.get("loanAmount", ""),
+                "loanDate": source.get("loanDate", ""),
+                "daysPastDue": source.get("daysPastDue", ""),
+                "reason": r.get("reason", ""),
+                "review_decision": r.get("review_decision") or "",
+                "review_metro2_status_code": r.get("review_metro2_status_code") or "",
+                "review_fcra_dofi": r.get("review_fcra_dofi") or "",
+                "missing_from_upload": r.get("missing_from_upload", False),
+            })
+        df = pd.DataFrame(records)
+
+    return df.to_csv(index=False)
+
+
+def render_report_txt(run_id: str) -> str:
+    """Regenerate the human-readable .txt summary for a run.
+
+    Mirrors the layout of the original ``write_report`` in metro2_generator.py
+    so the file is drop-in compatible with the legacy CLI workflow.
+    """
+    info = get_run(run_id)
+    run = info["run"]
+    validations = info["validations"]
+
+    as_of = run.get("as_of_date_str", "")
+    month_label = as_of[:6] if as_of else ""
+
+    lines = [
+        "=" * 60,
+        "KINGDOM AUTO FINANCE - Metro 2 Generation Report",
+        f"As-of date:   {as_of}",
+        f"Cycle:        {run.get('cycle_month','')}",
+        f"Status:       {run.get('status','')}",
+        f"Generated:    {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "=" * 60,
+        "",
+        f"READY TO UPLOAD:           {run.get('ready_count', 0)} accounts",
+        f"FLAGGED FOR REVIEW:        {run.get('review_count', 0)} accounts",
+        f"EXCLUDED:                  {run.get('excluded_count', 0)} accounts",
+        f"CARRIED OVER:              {run.get('carried_over_count', 0)} accounts",
+        "",
+        "── VALIDATION RESULTS ───────────────────────────────────",
+    ]
+    fatals = [v for v in validations if v["severity"] == "FATAL"]
+    warns = [v for v in validations if v["severity"] == "WARNING"]
+    infos = [v for v in validations if v["severity"] == "INFO"]
+    for v in fatals + warns + infos:
+        lines.append(f"  [{v['severity']}] {v['code']}: {v['message']}")
+    if not validations:
+        lines.append("  All checks passed.")
+
+    lines.append("")
+    lines.append("── NEXT STEPS ───────────────────────────────────────────")
+    if fatals:
+        lines.append("  ✗ FATAL errors found - DO NOT upload until resolved.")
+    else:
+        lines.append(f"  1. Upload metro2_ready_{month_label}.csv to Switch Labs")
+        lines.append(f"  2. Review metro2_review_{month_label}.csv - decide each account")
+        lines.append("  3. Upload final file to Experian STS by the 5th of the month")
+    lines.append("=" * 60)
+
+    return "\n".join(lines)
