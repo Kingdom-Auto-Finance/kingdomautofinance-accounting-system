@@ -189,6 +189,118 @@ export const settingsAPI = {
     }),
 };
 
+// ─── Credit Reports API ──────────────────────────────────────────────────
+export interface RunSummary {
+  id: string;
+  cycle_month: string;
+  status: 'draft' | 'final' | 'archived';
+  as_of_date_str: string;
+  ready_count: number;
+  review_count: number;
+  excluded_count: number;
+  carried_over_count: number;
+  created_at?: string;
+  finalized_at?: string;
+  note?: string;
+}
+
+export interface Validation {
+  id?: number;
+  severity: 'FATAL' | 'WARNING' | 'INFO';
+  code: string;
+  message: string;
+  affected_count?: number;
+}
+
+export interface RunDetail {
+  run: RunSummary;
+  validations: Validation[];
+}
+
+export interface RunItem {
+  id: string;
+  run_id: string;
+  deal_id: string;
+  bucket: 'ready' | 'review' | 'excluded' | 'carried';
+  reason?: string;
+  source_row: Record<string, any>;
+  metro2_row?: Record<string, any>;
+  review_decision?: 'approve' | 'exclude' | 'defer';
+  review_metro2_status_code?: string;
+  review_fcra_dofi?: string;
+  review_note?: string;
+  business_flag_source?: 'auto' | 'manual_on' | 'manual_off';
+  was_in_prior_cycle: boolean;
+  missing_from_upload: boolean;
+}
+
+export interface CreateDraftResponse {
+  run_id: string;
+  ready_count: number;
+  review_count: number;
+  excluded_count: number;
+  carried_over_count: number;
+}
+
+export interface ListItemsResponse {
+  data: RunItem[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export const creditReportAPI = {
+  /** Upload two MongoDB CSVs and create a new draft run. */
+  createDraft: async (
+    dealFile: File,
+    addressFile: File,
+    cycleMonth?: string
+  ): Promise<CreateDraftResponse> => {
+    const form = new FormData();
+    form.append('deal_csv', dealFile);
+    form.append('address_csv', addressFile);
+    if (cycleMonth) form.append('cycle_month', cycleMonth);
+
+    const response = await fetch(`${API_V1}/credit-reports/runs/draft`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    return response.json();
+  },
+
+  listRuns: (limit = 20) =>
+    fetchAPI<{ data: RunSummary[]; count: number }>(
+      `/credit-reports/runs?limit=${limit}`
+    ),
+
+  getRun: (runId: string) =>
+    fetchAPI<RunDetail>(`/credit-reports/runs/${runId}`),
+
+  listItems: (
+    runId: string,
+    params: { bucket?: string; q?: string; page?: number; page_size?: number } = {}
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.bucket) qs.set('bucket', params.bucket);
+    if (params.q) qs.set('q', params.q);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.page_size) qs.set('page_size', String(params.page_size));
+    return fetchAPI<ListItemsResponse>(
+      `/credit-reports/runs/${runId}/items?${qs.toString()}`
+    );
+  },
+
+  downloadCsv: (runId: string, bucket: 'ready' | 'review' | 'excluded' | 'carried') =>
+    fetchAPI<string>(`/credit-reports/runs/${runId}/download/${bucket}`),
+
+  downloadReport: (runId: string) =>
+    fetchAPI<string>(`/credit-reports/runs/${runId}/download-report`),
+};
+
 // Health check
 export const healthCheck = () =>
   fetch(`${API_URL}/health`).then(res => res.json());
@@ -201,5 +313,6 @@ export default {
   jobsAPI,
   auditAPI,
   settingsAPI,
+  creditReportAPI,
   healthCheck,
 };

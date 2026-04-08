@@ -1,0 +1,702 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Layout from '@/components/Layout';
+import {
+  creditReportAPI,
+  type RunSummary,
+  type RunDetail,
+  type RunItem,
+  type Validation,
+} from '@/lib/api';
+import { downloadCSV, formatDate } from '@/lib/utils';
+import {
+  ShieldCheck,
+  Upload,
+  AlertCircle,
+  CheckCircle2,
+  Info,
+  XCircle,
+  Download,
+  FileText,
+  X,
+} from 'lucide-react';
+
+type BucketKey = 'ready' | 'review' | 'excluded' | 'carried';
+
+const BUCKET_LABELS: Record<BucketKey, string> = {
+  ready: 'Ready',
+  review: 'Needs Review',
+  excluded: 'Excluded',
+  carried: 'Carried over',
+};
+
+const BUCKET_COLORS: Record<BucketKey, string> = {
+  ready: 'text-green-700 bg-green-100 dark:bg-green-900/30 dark:text-green-300',
+  review: 'text-amber-700 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-300',
+  excluded: 'text-gray-700 bg-gray-100 dark:bg-gray-800 dark:text-gray-300',
+  carried: 'text-blue-700 bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300',
+};
+
+export default function CreditReportsPage() {
+  // ── Global state ─────────────────────────────────────────────────────
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [currentRun, setCurrentRun] = useState<RunDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Upload form state
+  const [dealFile, setDealFile] = useState<File | null>(null);
+  const [addressFile, setAddressFile] = useState<File | null>(null);
+  const [cycleMonth, setCycleMonth] = useState<string>(defaultCycleMonth());
+  const [uploading, setUploading] = useState(false);
+
+  // Preview state
+  const [activeBucket, setActiveBucket] = useState<BucketKey>('ready');
+  const [bucketItems, setBucketItems] = useState<RunItem[]>([]);
+  const [bucketTotal, setBucketTotal] = useState(0);
+  const [bucketLoading, setBucketLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showInstructions, setShowInstructions] = useState(false);
+
+  // ── Initial load ─────────────────────────────────────────────────────
+  useEffect(() => {
+    loadRuns();
+  }, []);
+
+  const loadRuns = async () => {
+    try {
+      const resp = await creditReportAPI.listRuns(12);
+      setRuns(resp.data);
+      // Auto-select the most recent run if we don't have one selected
+      if (resp.data.length && !currentRun) {
+        const latest = resp.data[0];
+        const detail = await creditReportAPI.getRun(latest.id);
+        setCurrentRun(detail);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load runs');
+    }
+  };
+
+  // ── Reload items whenever active bucket or run changes ──────────────
+  useEffect(() => {
+    if (currentRun) {
+      loadItems(currentRun.run.id, activeBucket, searchQuery);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRun?.run.id, activeBucket]);
+
+  const loadItems = useCallback(
+    async (runId: string, bucket: BucketKey, query: string) => {
+      setBucketLoading(true);
+      try {
+        const resp = await creditReportAPI.listItems(runId, {
+          bucket,
+          q: query || undefined,
+          page: 1,
+          page_size: 200,
+        });
+        setBucketItems(resp.data);
+        setBucketTotal(resp.total);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load items');
+      } finally {
+        setBucketLoading(false);
+      }
+    },
+    []
+  );
+
+  // ── Upload handler ───────────────────────────────────────────────────
+  const handleUpload = async () => {
+    if (!dealFile || !addressFile) {
+      setError('Please select both a Deal CSV and an Address CSV.');
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      const resp = await creditReportAPI.createDraft(dealFile, addressFile, cycleMonth);
+      // Reload the runs list and auto-select the new draft
+      await loadRuns();
+      const detail = await creditReportAPI.getRun(resp.run_id);
+      setCurrentRun(detail);
+      setActiveBucket('ready');
+      // Scroll to preview
+      document.getElementById('preview-section')?.scrollIntoView({ behavior: 'smooth' });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ── Search debounced reload ──────────────────────────────────────────
+  const handleSearchChange = (val: string) => {
+    setSearchQuery(val);
+    if (currentRun) {
+      loadItems(currentRun.run.id, activeBucket, val);
+    }
+  };
+
+  // ── Download handlers ────────────────────────────────────────────────
+  const handleDownload = async (bucket: BucketKey) => {
+    if (!currentRun) return;
+    try {
+      const csv = await creditReportAPI.downloadCsv(currentRun.run.id, bucket);
+      const cycle = currentRun.run.cycle_month.replace(/-/g, '');
+      downloadCSV(csv, `metro2_${bucket}_${cycle}.csv`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Download failed');
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    if (!currentRun) return;
+    try {
+      const text = await creditReportAPI.downloadReport(currentRun.run.id);
+      const cycle = currentRun.run.cycle_month.replace(/-/g, '');
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `metro2_report_${cycle}.txt`;
+      link.click();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Download failed');
+    }
+  };
+
+  // ── Derived ──────────────────────────────────────────────────────────
+  const bucketCounts = useMemo<Record<BucketKey, number>>(() => {
+    const r = currentRun?.run;
+    return {
+      ready: r?.ready_count ?? 0,
+      review: r?.review_count ?? 0,
+      excluded: r?.excluded_count ?? 0,
+      carried: r?.carried_over_count ?? 0,
+    };
+  }, [currentRun]);
+
+  const fatalValidations = (currentRun?.validations ?? []).filter(
+    v => v.severity === 'FATAL'
+  );
+
+  return (
+    <Layout>
+      <div className="space-y-6">
+        {/* ── Header ───────────────────────────────────────────────── */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
+              <ShieldCheck className="w-8 h-8 text-blue-600" />
+              Credit Reports
+            </h1>
+            <p className="text-muted-foreground mt-1">
+              Monthly Metro 2 / Experian reporting workflow.
+            </p>
+          </div>
+        </div>
+
+        {/* ── Error banner ────────────────────────────────────────── */}
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 text-sm text-red-800 dark:text-red-300">{error}</div>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-600 hover:text-red-800"
+              aria-label="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* ── Status banner ──────────────────────────────────────── */}
+        <StatusBanner runs={runs} currentRun={currentRun} />
+
+        {/* ── Upload card ────────────────────────────────────────── */}
+        <div className="bg-card p-6 rounded-lg shadow border border-border">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-semibold text-foreground">1. Upload CSVs</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Export deals + dealaddresses from MongoDB and upload both files here.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowInstructions(true)}
+              className="text-sm text-blue-600 hover:text-blue-700 underline"
+            >
+              How do I export from MongoDB?
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <FileDropZone
+              label="Deal export (.csv)"
+              file={dealFile}
+              onFileChange={setDealFile}
+              hint="kingdomautofinance_Deal.csv"
+            />
+            <FileDropZone
+              label="Address export (.csv)"
+              file={addressFile}
+              onFileChange={setAddressFile}
+              hint="kingdomautofinance_Address.csv"
+            />
+          </div>
+
+          <div className="flex items-end gap-4">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-foreground mb-1">
+                Cycle month (reporting period)
+              </label>
+              <input
+                type="month"
+                value={cycleMonth.slice(0, 7)}
+                onChange={e => setCycleMonth(e.target.value + '-01')}
+                className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 bg-card text-foreground"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Defaults to last calendar month.
+              </p>
+            </div>
+            <button
+              onClick={handleUpload}
+              disabled={uploading || !dealFile || !addressFile}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <Upload className="w-4 h-4" />
+              {uploading ? 'Processing...' : 'Process upload'}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Preview section ────────────────────────────────────── */}
+        {currentRun && (
+          <div id="preview-section" className="bg-card p-6 rounded-lg shadow border border-border">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-foreground">
+                  2. Review accounts
+                </h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Cycle {currentRun.run.cycle_month} · Status:{' '}
+                  <span className="font-medium">{currentRun.run.status}</span>
+                </p>
+              </div>
+              <input
+                type="search"
+                placeholder="Search deal ID or name..."
+                value={searchQuery}
+                onChange={e => handleSearchChange(e.target.value)}
+                className="px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 bg-card text-foreground w-64"
+              />
+            </div>
+
+            {/* Bucket tabs */}
+            <div className="flex flex-wrap gap-2 mb-4 border-b border-border pb-4">
+              {(Object.keys(BUCKET_LABELS) as BucketKey[]).map(b => (
+                <button
+                  key={b}
+                  onClick={() => setActiveBucket(b)}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    activeBucket === b
+                      ? BUCKET_COLORS[b] + ' ring-2 ring-offset-2 ring-offset-card'
+                      : 'text-muted-foreground hover:bg-muted/50'
+                  }`}
+                >
+                  {BUCKET_LABELS[b]}{' '}
+                  <span className="font-semibold">({bucketCounts[b]})</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Items table */}
+            <BucketTable
+              bucket={activeBucket}
+              items={bucketItems}
+              total={bucketTotal}
+              loading={bucketLoading}
+            />
+          </div>
+        )}
+
+        {/* ── Validation panel ───────────────────────────────────── */}
+        {currentRun && currentRun.validations.length > 0 && (
+          <ValidationList validations={currentRun.validations} />
+        )}
+
+        {/* ── Download card ──────────────────────────────────────── */}
+        {currentRun && (
+          <div className="bg-card p-6 rounded-lg shadow border border-border">
+            <h2 className="text-xl font-semibold text-foreground mb-1">
+              3. Download files
+            </h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Regenerated on demand from the stored run snapshot.
+              {fatalValidations.length > 0 && (
+                <span className="ml-2 text-red-600 font-medium">
+                  ({fatalValidations.length} FATAL warnings - resolve before uploading to Switch Labs)
+                </span>
+              )}
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={() => handleDownload('ready')}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                Metro 2 ready CSV
+              </button>
+              <button
+                onClick={() => handleDownload('review')}
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                Review CSV
+              </button>
+              <button
+                onClick={() => handleDownload('excluded')}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                Excluded CSV
+              </button>
+              <button
+                onClick={handleDownloadReport}
+                className="px-4 py-2 bg-card border border-border text-foreground rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
+              >
+                <FileText className="w-4 h-4" />
+                Summary report (.txt)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── MongoDB export instructions modal ──────────────────────── */}
+      {showInstructions && <MongoInstructionsModal onClose={() => setShowInstructions(false)} />}
+    </Layout>
+  );
+}
+
+// ─── Subcomponents (inlined for Step 5; extracted later) ────────────────────
+function defaultCycleMonth(): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setDate(d.getDate() - 1); // last day of previous month
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}-01`;
+}
+
+function StatusBanner({
+  runs,
+  currentRun,
+}: {
+  runs: RunSummary[];
+  currentRun: RunDetail | null;
+}) {
+  const latestFinal = runs.find(r => r.status === 'final');
+  return (
+    <div className="bg-card p-6 rounded-lg shadow border border-border">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            {currentRun ? (
+              <span
+                className={`px-3 py-1 rounded-full text-sm font-medium ${
+                  currentRun.run.status === 'final'
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                    : currentRun.run.status === 'archived'
+                    ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
+                    : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                }`}
+              >
+                {currentRun.run.status.toUpperCase()}
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
+                NOT STARTED
+              </span>
+            )}
+            <h2 className="text-xl font-semibold text-foreground">
+              {currentRun
+                ? `Cycle ${currentRun.run.cycle_month}`
+                : 'No active cycle'}
+            </h2>
+          </div>
+          {latestFinal ? (
+            <p className="text-sm text-muted-foreground">
+              Last finalized cycle: {formatDate(latestFinal.cycle_month)} —{' '}
+              {latestFinal.ready_count} accounts
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No prior finalized cycles. Upload your first CSVs below to begin.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FileDropZone({
+  label,
+  file,
+  onFileChange,
+  hint,
+}: {
+  label: string;
+  file: File | null;
+  onFileChange: (f: File | null) => void;
+  hint: string;
+}) {
+  return (
+    <label className="block cursor-pointer">
+      <span className="block text-sm font-medium text-foreground mb-1">{label}</span>
+      <div
+        className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+          file
+            ? 'border-green-400 bg-green-50 dark:bg-green-900/20'
+            : 'border-border hover:border-blue-400 bg-muted/20'
+        }`}
+      >
+        {file ? (
+          <div>
+            <CheckCircle2 className="w-8 h-8 text-green-600 mx-auto mb-2" />
+            <p className="text-sm font-medium text-foreground">{file.name}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {(file.size / 1024).toFixed(1)} KB
+            </p>
+          </div>
+        ) : (
+          <div>
+            <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">Click to select</p>
+            <p className="text-xs text-muted-foreground mt-1">{hint}</p>
+          </div>
+        )}
+      </div>
+      <input
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={e => onFileChange(e.target.files?.[0] ?? null)}
+      />
+    </label>
+  );
+}
+
+function BucketTable({
+  bucket,
+  items,
+  total,
+  loading,
+}: {
+  bucket: BucketKey;
+  items: RunItem[];
+  total: number;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="py-12 text-center text-muted-foreground">Loading...</div>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <div className="py-12 text-center text-muted-foreground">
+        No accounts in this bucket.
+      </div>
+    );
+  }
+
+  const headers =
+    bucket === 'ready'
+      ? ['Deal ID', 'Client name', 'Status', 'Loan amount', 'Balance', 'Opened']
+      : bucket === 'review'
+      ? ['Deal ID', 'Client name', 'Status', 'Days past due', 'Reason']
+      : bucket === 'excluded'
+      ? ['Deal ID', 'Client name', 'Status', 'Reason', 'Flag source']
+      : ['Deal ID', 'Client name', 'Status', 'Last reported'];
+
+  return (
+    <div>
+      <div className="text-sm text-muted-foreground mb-2">
+        Showing {items.length} of {total}
+      </div>
+      <div className="overflow-x-auto border border-border rounded-lg">
+        <table className="w-full">
+          <thead className="bg-muted/50">
+            <tr>
+              {headers.map(h => (
+                <th
+                  key={h}
+                  className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {items.map(item => (
+              <BucketRow key={item.id} bucket={bucket} item={item} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function BucketRow({ bucket, item }: { bucket: BucketKey; item: RunItem }) {
+  const src = item.source_row || {};
+  const dealId = item.deal_id;
+  const clientName = String(src.clientName ?? '');
+  const statusName = String(src.statusName ?? '');
+
+  if (bucket === 'ready') {
+    const m2 = item.metro2_row || {};
+    return (
+      <tr className="hover:bg-muted/30 transition-colors">
+        <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{clientName}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
+        <td className="px-4 py-3 text-sm text-foreground">
+          ${m2.HighestCreditOrOrigLoanAmt ?? '0'}
+        </td>
+        <td className="px-4 py-3 text-sm text-foreground">${m2.CurrentBalance ?? '0'}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{m2.DateOpened ?? ''}</td>
+      </tr>
+    );
+  }
+  if (bucket === 'review') {
+    return (
+      <tr className="hover:bg-muted/30 transition-colors">
+        <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{clientName}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{String(src.daysPastDue ?? '')}</td>
+        <td className="px-4 py-3 text-sm text-muted-foreground">{item.reason ?? ''}</td>
+      </tr>
+    );
+  }
+  if (bucket === 'excluded') {
+    return (
+      <tr className="hover:bg-muted/30 transition-colors">
+        <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{clientName}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
+        <td className="px-4 py-3 text-sm text-muted-foreground">{item.reason ?? ''}</td>
+        <td className="px-4 py-3 text-sm text-muted-foreground">
+          {item.business_flag_source ?? '-'}
+        </td>
+      </tr>
+    );
+  }
+  // carried
+  return (
+    <tr className="hover:bg-muted/30 transition-colors">
+      <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
+      <td className="px-4 py-3 text-sm text-foreground">{clientName}</td>
+      <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
+      <td className="px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+        Missing from current upload
+      </td>
+    </tr>
+  );
+}
+
+function ValidationList({ validations }: { validations: Validation[] }) {
+  const iconFor = (sev: string) => {
+    if (sev === 'FATAL') return <XCircle className="w-5 h-5 text-red-600" />;
+    if (sev === 'WARNING') return <AlertCircle className="w-5 h-5 text-amber-600" />;
+    return <Info className="w-5 h-5 text-blue-600" />;
+  };
+  const colorFor = (sev: string) => {
+    if (sev === 'FATAL') return 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800';
+    if (sev === 'WARNING') return 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800';
+    return 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800';
+  };
+  return (
+    <div className="bg-card p-6 rounded-lg shadow border border-border">
+      <h2 className="text-xl font-semibold text-foreground mb-4">Validation findings</h2>
+      <div className="space-y-2">
+        {validations.map((v, i) => (
+          <div
+            key={i}
+            className={`border rounded-lg p-3 flex items-start gap-3 ${colorFor(v.severity)}`}
+          >
+            {iconFor(v.severity)}
+            <div className="flex-1 text-sm">
+              <div className="font-medium text-foreground">
+                [{v.severity}] {v.code}
+              </div>
+              <div className="text-muted-foreground mt-0.5">{v.message}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MongoInstructionsModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="fixed inset-0 bg-black bg-opacity-50" onClick={onClose} />
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div className="relative bg-card rounded-lg shadow-xl max-w-2xl w-full p-6">
+          <div className="flex items-start justify-between mb-4">
+            <h3 className="text-xl font-semibold text-foreground">
+              How to export from MongoDB
+            </h3>
+            <button
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground"
+              aria-label="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Run these two commands in the MongoDB shell, or use MongoDB Compass to
+            export each collection as CSV.
+          </p>
+          <div className="bg-muted/30 rounded-lg p-4 font-mono text-xs text-foreground overflow-x-auto">
+            <div className="mb-4">
+              <div className="text-muted-foreground mb-1"># Deals collection</div>
+              mongoexport --db=&lt;your_db&gt; --collection=deals \<br />
+              &nbsp;&nbsp;--type=csv --fields=... \<br />
+              &nbsp;&nbsp;--out=kingdomautofinance_Deal.csv
+            </div>
+            <div>
+              <div className="text-muted-foreground mb-1"># Addresses collection</div>
+              mongoexport --db=&lt;your_db&gt; --collection=dealaddresses \<br />
+              &nbsp;&nbsp;--type=csv --fields=_id,address,address2,city,state,zip,postalCode \<br />
+              &nbsp;&nbsp;--out=kingdomautofinance_Address.csv
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-4">
+            Once both files are saved to your laptop, drop them into the Upload
+            card and click <span className="font-medium">Process upload</span>.
+          </p>
+          <div className="mt-6 flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
