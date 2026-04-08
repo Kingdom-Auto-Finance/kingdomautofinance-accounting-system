@@ -324,6 +324,12 @@ export const creditReportAPI = {
       method: 'POST',
       body,
     }),
+
+  finalize: (runId: string, body: { force?: boolean; note?: string }) =>
+    fetchAPI<RunDetail>(`/credit-reports/runs/${runId}/finalize`, {
+      method: 'POST',
+      body,
+    }),
 };
 
 // Health check

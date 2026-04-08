@@ -433,6 +433,113 @@ class TestSetReviewDecision:
             )
 
 
+class TestFinalizeRun:
+    def _mk_run(self, shim, cycle1_bytes):
+        return svc.create_draft_run(
+            deal_csv_bytes=cycle1_bytes["deal"],
+            deal_filename="deals_cycle1.csv",
+            address_csv_bytes=cycle1_bytes["address"],
+            address_filename="addresses_cycle1.csv",
+            cycle_month=date(2026, 3, 31),
+        )
+
+    def test_finalize_rejects_fatal_without_force(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # 4 ready accounts < 100 minimum → FATAL in enforce_minimum mode
+        with pytest.raises(ValueError, match="FATAL"):
+            svc.finalize_run(run_id=result.run_id)
+
+    def test_finalize_succeeds_with_force(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        finalized = svc.finalize_run(run_id=result.run_id, force=True)
+        assert finalized["run"]["status"] == "final"
+        assert finalized["run"]["finalized_at"] is not None
+
+    def test_finalize_writes_note(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        finalized = svc.finalize_run(
+            run_id=result.run_id, force=True, note="Sent to STS on 2026-04-02 by Mariana"
+        )
+        assert "Mariana" in finalized["run"]["note"]
+
+    def test_finalize_archives_prior_final(self, supabase_shim, cycle1_bytes):
+        # First run → finalize
+        r1 = self._mk_run(supabase_shim, cycle1_bytes)
+        svc.finalize_run(run_id=r1.run_id, force=True)
+
+        # Second run for the SAME cycle → finalize
+        r2 = self._mk_run(supabase_shim, cycle1_bytes)
+        svc.finalize_run(run_id=r2.run_id, force=True)
+
+        runs = svc.list_runs(limit=10)
+        by_id = {r["id"]: r for r in runs}
+        assert by_id[r1.run_id]["status"] == "archived"
+        assert by_id[r2.run_id]["status"] == "final"
+
+    def test_finalize_writes_account_state(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        svc.finalize_run(run_id=result.run_id, force=True)
+
+        # Every ready account should have last_reported_cycle set
+        state_rows = (
+            supabase_shim.table("credit_report_account_state")
+            .select("*")
+            .execute()
+            .data
+        )
+        by_id = {s["deal_id"]: s for s in state_rows}
+        for ready_id in ("d001", "d002", "d003", "d009"):
+            assert ready_id in by_id
+            assert by_id[ready_id]["last_reported_cycle"] == "2026-03-31"
+
+    def test_finalize_persists_business_override(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # Manually unflag d005 (Taqueria LLC) → auto-on → manual-off
+        svc.set_business_flag(
+            run_id=result.run_id, deal_id="d005", is_business=False
+        )
+        svc.finalize_run(run_id=result.run_id, force=True)
+
+        state = (
+            supabase_shim.table("credit_report_account_state")
+            .select("*")
+            .eq("deal_id", "d005")
+            .execute()
+            .data[0]
+        )
+        assert state["is_business_override"] is False
+
+    def test_finalize_persists_review_decision(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        svc.set_review_decision(
+            run_id=result.run_id,
+            deal_id="d007",  # Repossessed
+            decision="approve",
+            metro2_status_code="95",
+            fcra_dofi="20251015",
+            note="Reposession complete",
+        )
+        svc.finalize_run(run_id=result.run_id, force=True)
+
+        state = (
+            supabase_shim.table("credit_report_account_state")
+            .select("*")
+            .eq("deal_id", "d007")
+            .execute()
+            .data[0]
+        )
+        assert state["last_review_decision"] == "approve"
+        assert state["last_review_metro2_status_code"] == "95"
+        assert state["last_review_fcra_dofi"] == "20251015"
+        assert state["last_review_status_name"] == "Repossessed"
+
+    def test_cannot_finalize_twice(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        svc.finalize_run(run_id=result.run_id, force=True)
+        with pytest.raises(ValueError, match="draft"):
+            svc.finalize_run(run_id=result.run_id, force=True)
+
+
 class TestRenderReportTxt:
     def test_report_includes_counts(self, supabase_shim, cycle1_bytes):
         result = svc.create_draft_run(

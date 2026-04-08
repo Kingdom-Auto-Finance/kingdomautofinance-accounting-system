@@ -25,6 +25,7 @@ import {
   Check,
   Ban,
   Clock,
+  Lock,
 } from 'lucide-react';
 
 type BucketKey = 'ready' | 'review' | 'excluded' | 'carried';
@@ -196,6 +197,21 @@ export default function CreditReportsPage() {
       downloadCSV(csv, `metro2_${bucket}_${cycle}.csv`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Download failed');
+    }
+  };
+
+  const handleFinalize = async (force: boolean, note?: string) => {
+    if (!currentRun) return;
+    try {
+      const detail = await creditReportAPI.finalize(currentRun.run.id, {
+        force,
+        note,
+      });
+      setCurrentRun(detail);
+      await loadRuns();
+      loadItems(detail.run.id, activeBucket, searchQuery);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Finalize failed');
     }
   };
 
@@ -379,51 +395,15 @@ export default function CreditReportsPage() {
           <ValidationList validations={currentRun.validations} />
         )}
 
-        {/* ── Download card ──────────────────────────────────────── */}
+        {/* ── Finalize + Download card ───────────────────────────── */}
         {currentRun && (
-          <div className="bg-card p-6 rounded-lg shadow border border-border">
-            <h2 className="text-xl font-semibold text-foreground mb-1">
-              3. Download files
-            </h2>
-            <p className="text-sm text-muted-foreground mb-4">
-              Regenerated on demand from the stored run snapshot.
-              {fatalValidations.length > 0 && (
-                <span className="ml-2 text-red-600 font-medium">
-                  ({fatalValidations.length} FATAL warnings - resolve before uploading to Switch Labs)
-                </span>
-              )}
-            </p>
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => handleDownload('ready')}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                Metro 2 ready CSV
-              </button>
-              <button
-                onClick={() => handleDownload('review')}
-                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                Review CSV
-              </button>
-              <button
-                onClick={() => handleDownload('excluded')}
-                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                Excluded CSV
-              </button>
-              <button
-                onClick={handleDownloadReport}
-                className="px-4 py-2 bg-card border border-border text-foreground rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
-              >
-                <FileText className="w-4 h-4" />
-                Summary report (.txt)
-              </button>
-            </div>
-          </div>
+          <FinalizeCard
+            currentRun={currentRun}
+            fatalCount={fatalValidations.length}
+            onFinalize={handleFinalize}
+            onDownload={handleDownload}
+            onDownloadReport={handleDownloadReport}
+          />
         )}
       </div>
 
@@ -896,6 +876,136 @@ function ReviewDecisionForm({
           className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
         >
           Save decision
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FinalizeCard({
+  currentRun,
+  fatalCount,
+  onFinalize,
+  onDownload,
+  onDownloadReport,
+}: {
+  currentRun: RunDetail;
+  fatalCount: number;
+  onFinalize: (force: boolean, note?: string) => void;
+  onDownload: (bucket: BucketKey) => void;
+  onDownloadReport: () => void;
+}) {
+  const [note, setNote] = useState('');
+  const [finalizing, setFinalizing] = useState(false);
+
+  const isDraft = currentRun.run.status === 'draft';
+  const isFinal = currentRun.run.status === 'final';
+
+  const handleFinalizeClick = async (force: boolean) => {
+    if (
+      !confirm(
+        force
+          ? `Override ${fatalCount} FATAL warning(s) and finalize cycle ${currentRun.run.cycle_month}?`
+          : `Finalize cycle ${currentRun.run.cycle_month}? This locks the run and writes cross-cycle state.`
+      )
+    ) {
+      return;
+    }
+    setFinalizing(true);
+    try {
+      await onFinalize(force, note || undefined);
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  return (
+    <div className="bg-card p-6 rounded-lg shadow border border-border">
+      <h2 className="text-xl font-semibold text-foreground mb-1">
+        3. Finalize and download
+      </h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        {isFinal
+          ? 'This run is finalized. Re-download any bucket CSV or the summary report below.'
+          : 'Lock the cycle and persist cross-cycle state (business flags, review decisions, continuity).'}
+      </p>
+
+      {isDraft && (
+        <div className="space-y-3 mb-5">
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1">
+              Audit note (optional)
+            </label>
+            <input
+              type="text"
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="e.g. Sent to Switch Labs by Mariana on 2026-04-02"
+              className="w-full px-4 py-2 border border-input rounded-lg bg-card text-foreground"
+            />
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => handleFinalizeClick(false)}
+              disabled={finalizing || fatalCount > 0}
+              className="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              title={
+                fatalCount > 0
+                  ? `Resolve ${fatalCount} FATAL warning(s) first, or click "Override" below.`
+                  : 'Finalize and lock this cycle'
+              }
+            >
+              <Lock className="w-4 h-4" />
+              {finalizing ? 'Finalizing...' : 'Finalize and lock cycle'}
+            </button>
+            {fatalCount > 0 && (
+              <button
+                onClick={() => handleFinalizeClick(true)}
+                disabled={finalizing}
+                className="px-5 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                title={`Override ${fatalCount} FATAL warning(s) and finalize anyway`}
+              >
+                <AlertCircle className="w-4 h-4" />
+                Override and finalize
+              </button>
+            )}
+          </div>
+          {fatalCount > 0 && (
+            <p className="text-sm text-red-600">
+              {fatalCount} FATAL warning(s) present. Review them above before finalizing.
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-3">
+        <button
+          onClick={() => onDownload('ready')}
+          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+        >
+          <Download className="w-4 h-4" />
+          Metro 2 ready CSV
+        </button>
+        <button
+          onClick={() => onDownload('review')}
+          className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors flex items-center gap-2"
+        >
+          <Download className="w-4 h-4" />
+          Review CSV
+        </button>
+        <button
+          onClick={() => onDownload('excluded')}
+          className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
+        >
+          <Download className="w-4 h-4" />
+          Excluded CSV
+        </button>
+        <button
+          onClick={onDownloadReport}
+          className="px-4 py-2 bg-card border border-border text-foreground rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
+        >
+          <FileText className="w-4 h-4" />
+          Summary report (.txt)
         </button>
       </div>
     </div>

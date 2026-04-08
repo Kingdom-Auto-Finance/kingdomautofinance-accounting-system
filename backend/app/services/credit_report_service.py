@@ -1108,6 +1108,238 @@ def set_review_decision(
     return _get_run_item(run_id, deal_id)
 
 
+def finalize_run(
+    *,
+    run_id: str,
+    force: bool = False,
+    note: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Finalize a draft run.
+
+    Steps:
+      1. Re-validate the ready bucket with enforce_minimum=True. Reject if
+         any FATAL findings exist unless ``force=True``.
+      2. Archive any existing 'final' run for the same cycle_month (soft
+         delete - prior finals are preserved for audit history).
+      3. Flip this run's status to 'final' and record finalized_by / _at.
+      4. Upsert credit_report_account_state for every ready deal_id:
+         - Persist business overrides (from run_items.business_flag_source)
+         - Persist review decisions (from run_items.review_decision)
+         - Update last_reported_cycle + last_reported_run_id
+      5. Re-persist validations from the fresh validate() call so the
+         finalized snapshot reflects the as-submitted state.
+
+    The cross-cycle continuity guarantee depends on last_reported_cycle
+    being written here, so step 4 runs BEFORE the status flip commits.
+    """
+    supabase = get_supabase_client()
+
+    # ── Load run + items ──────────────────────────────────────────────
+    run = _assert_run_is_draft(run_id)
+
+    # Load ready items to rebuild the ready DataFrame for validation.
+    ready_items = _load_all_items(run_id, BUCKET_READY)
+    if not ready_items:
+        raise ValueError("Cannot finalize: run has no ready items")
+
+    ready_rows = [r.get("metro2_row") or {} for r in ready_items]
+    ready_df = pd.DataFrame(ready_rows, columns=list(engine.METRO2_COLUMNS))
+
+    # ── Re-validate with enforce_minimum=True ─────────────────────────
+    findings = engine.validate(ready_df, min_accounts=100, enforce_minimum=True)
+    fatals = [f for f in findings if f.severity == "FATAL"]
+    if fatals and not force:
+        messages = "; ".join(f"{f.code}: {f.message}" for f in fatals)
+        raise ValueError(
+            f"Cannot finalize: {len(fatals)} FATAL validation error(s). "
+            f"Pass force=True to override. Details: {messages}"
+        )
+
+    cycle_month = run["cycle_month"]
+    if isinstance(cycle_month, str):
+        cycle_month_date = date.fromisoformat(cycle_month[:10])
+    else:
+        cycle_month_date = cycle_month
+
+    # ── Archive any existing final for this cycle ────────────────────
+    existing_finals = (
+        supabase.table("credit_report_runs")
+        .select("id")
+        .eq("status", "final")
+        .eq("cycle_month", cycle_month_date.isoformat())
+        .execute()
+        .data
+        or []
+    )
+    for ef in existing_finals:
+        if ef["id"] == run_id:
+            continue
+        supabase.table("credit_report_runs").update(
+            {"status": "archived", "archived_at": datetime.utcnow().isoformat()}
+        ).eq("id", ef["id"]).execute()
+
+    # ── Upsert credit_report_account_state ───────────────────────────
+    _upsert_account_state_from_run(
+        run_id=run_id,
+        cycle_month=cycle_month_date,
+        user_id=user_id,
+        ready_items=ready_items,
+    )
+
+    # ── Flip status + persist note ────────────────────────────────────
+    now = datetime.utcnow().isoformat()
+    update_payload: Dict[str, Any] = {
+        "status": "final",
+        "finalized_at": now,
+        "finalized_by": user_id,
+    }
+    if note is not None:
+        update_payload["note"] = note
+    supabase.table("credit_report_runs").update(update_payload).eq(
+        "id", run_id
+    ).execute()
+
+    # ── Re-persist validations ───────────────────────────────────────
+    supabase.table("credit_report_validations").delete().eq(
+        "run_id", run_id
+    ).execute()
+    _bulk_insert_validations(run_id, findings)
+
+    return get_run(run_id)
+
+
+def _load_all_items(run_id: str, bucket: str) -> List[Dict[str, Any]]:
+    """Load all run_items for a bucket, paginated."""
+    supabase = get_supabase_client()
+    rows: List[Dict[str, Any]] = []
+    offset = 0
+    page_size = 1000
+    while True:
+        result = (
+            supabase.table("credit_report_run_items")
+            .select("*")
+            .eq("run_id", run_id)
+            .eq("bucket", bucket)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = result.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    return rows
+
+
+def _upsert_account_state_from_run(
+    *,
+    run_id: str,
+    cycle_month: date,
+    user_id: Optional[str],
+    ready_items: List[Dict[str, Any]],
+) -> None:
+    """Upsert credit_report_account_state for every item in the finalized run.
+
+    This is where cross-cycle memory is born. For every account:
+      - If business_flag_source is manual_on/manual_off, record the override.
+      - If review_decision is set, record it so next cycle can auto-apply.
+      - For ready items, bump last_reported_cycle / last_reported_run_id.
+
+    Excluded / review / carried items from the same run are also inspected
+    so that manual business overrides AND 'exclude' review decisions persist
+    even when the account is not in the ready bucket.
+    """
+    supabase = get_supabase_client()
+    now = datetime.utcnow().isoformat()
+
+    # Collect state updates for every distinct deal_id across all buckets
+    # (ready, review, excluded). Carried rows do NOT mutate state - they're
+    # just a snapshot of the prior cycle.
+    all_buckets = [BUCKET_READY, BUCKET_REVIEW, BUCKET_EXCLUDED]
+    all_items: List[Dict[str, Any]] = []
+    for bucket in all_buckets:
+        all_items.extend(_load_all_items(run_id, bucket))
+
+    # Pre-load existing state so we can merge (not clobber) unrelated fields.
+    deal_ids = [i["deal_id"] for i in all_items]
+    existing = _load_account_state_map(deal_ids)
+
+    # Index ready items for fast last_reported_* updates.
+    ready_ids = {i["deal_id"] for i in ready_items}
+
+    updates: Dict[str, Dict[str, Any]] = {}
+    for item in all_items:
+        deal_id = item["deal_id"]
+        src = item.get("source_row") or {}
+
+        state_update: Dict[str, Any] = dict(existing.get(deal_id, {}))
+        state_update["deal_id"] = deal_id
+
+        # ── Business override ─────────────────────────────────────
+        flag_source = item.get("business_flag_source")
+        if flag_source == "manual_on":
+            state_update["is_business_override"] = True
+            state_update["business_flag_set_by"] = user_id
+            state_update["business_flag_set_at"] = now
+        elif flag_source == "manual_off":
+            state_update["is_business_override"] = False
+            state_update["business_flag_set_by"] = user_id
+            state_update["business_flag_set_at"] = now
+
+        # ── Review decision ───────────────────────────────────────
+        decision = item.get("review_decision")
+        if decision:
+            state_update["last_review_decision"] = decision
+            state_update["last_review_metro2_status_code"] = item.get(
+                "review_metro2_status_code"
+            )
+            state_update["last_review_fcra_dofi"] = item.get("review_fcra_dofi")
+            state_update["last_review_note"] = item.get("review_note")
+            state_update["last_review_status_name"] = str(src.get("statusName", ""))
+            state_update["last_review_set_by"] = user_id
+            state_update["last_review_set_at"] = now
+
+        # ── Continuity (only for ready items) ─────────────────────
+        if deal_id in ready_ids:
+            state_update["last_reported_cycle"] = cycle_month.isoformat()
+            state_update["last_reported_run_id"] = run_id
+
+        updates[deal_id] = state_update
+
+    # ── Write back ────────────────────────────────────────────────────
+    # SupabaseShim doesn't support upsert, so do a manual "delete+insert"
+    # for each row. Real Supabase could use upsert with on_conflict.
+    for deal_id, payload in updates.items():
+        # Strip keys the table doesn't have
+        clean = {
+            k: v
+            for k, v in payload.items()
+            if k
+            in {
+                "deal_id",
+                "is_business_override",
+                "business_flag_set_by",
+                "business_flag_set_at",
+                "business_flag_note",
+                "last_review_decision",
+                "last_review_metro2_status_code",
+                "last_review_fcra_dofi",
+                "last_review_status_name",
+                "last_review_set_by",
+                "last_review_set_at",
+                "last_review_note",
+                "last_reported_cycle",
+                "last_reported_run_id",
+            }
+        }
+        # Delete any pre-existing row for this deal_id then insert the fresh one.
+        supabase.table("credit_report_account_state").delete().eq(
+            "deal_id", deal_id
+        ).execute()
+        supabase.table("credit_report_account_state").insert(clean).execute()
+
+
 def render_report_txt(run_id: str) -> str:
     """Regenerate the human-readable .txt summary for a run.
 

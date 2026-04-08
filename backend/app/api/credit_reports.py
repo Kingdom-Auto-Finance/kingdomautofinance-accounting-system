@@ -175,6 +175,11 @@ async def list_run_items(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class FinalizeRequest(BaseModel):
+    force: bool = False
+    note: Optional[str] = None
+
+
 class BusinessFlagRequest(BaseModel):
     is_business: bool
     note: Optional[str] = None
@@ -226,6 +231,29 @@ async def set_review_decision(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"set_review_decision failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{run_id}/finalize")
+async def finalize_run(run_id: str, body: FinalizeRequest):
+    """Finalize a draft run.
+
+    Runs full validation (``enforce_minimum=True``); rejects on FATAL unless
+    ``force=True``. Archives any existing final for the same cycle, flips
+    this run's status to 'final', and upserts credit_report_account_state
+    so business flags and review decisions persist to the next cycle.
+    """
+    try:
+        return svc.finalize_run(
+            run_id=run_id,
+            force=body.force,
+            note=body.note,
+            user_id=None,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"finalize_run failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
