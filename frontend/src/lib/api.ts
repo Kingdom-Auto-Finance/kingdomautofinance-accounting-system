@@ -330,6 +330,17 @@ export const creditReportAPI = {
       method: 'POST',
       body,
     }),
+
+  getRules: () =>
+    fetchAPI<{
+      experian_config: Record<string, string>;
+      status_buckets: Record<string, string[]>;
+      business_pattern: string;
+      frequency_map: Record<string, { metro2_code: string }>;
+      address_field_candidates: Record<string, string[]>;
+      metro2_columns: string[];
+      editability: string;
+    }>('/credit-reports/rules'),
 };
 
 // Health check

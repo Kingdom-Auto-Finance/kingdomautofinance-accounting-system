@@ -262,6 +262,81 @@ class TestMergeDealsAddresses:
         assert (merged["address1"] == "").all()
         assert any(f.code == m.CODE_MISSING_ADDRESS for f in findings)
 
+    def test_street_and_zipCode_variants(self):
+        """Real Kingdom export uses street/zipCode - must map automatically."""
+        deals = pd.DataFrame([{"_id": "d1", "dealAddressId": "a1"}])
+        addrs = pd.DataFrame([
+            {
+                "_id": "a1",
+                "street": "3028 Chamblee Tucker Rd",
+                "state": "GA",
+                "city": "Atlanta",
+                "zipCode": "30341",
+            }
+        ])
+        merged, findings = m.merge_deals_addresses(deals, addrs)
+        assert merged.loc[0, "address1"] == "3028 Chamblee Tucker Rd"
+        assert merged.loc[0, "city"] == "Atlanta"
+        assert merged.loc[0, "state"] == "GA"
+        assert merged.loc[0, "postal_code"] == "30341"
+        # Match rate should be 100% since every deal has an address.
+        match_finding = next(f for f in findings if f.code == "ADDRESS_MATCH_RATE")
+        assert "100.0%" in match_finding.message
+
+    def test_addressLine1_variant(self):
+        deals = pd.DataFrame([{"_id": "d1", "dealAddressId": "a1"}])
+        addrs = pd.DataFrame([
+            {
+                "_id": "a1",
+                "addressLine1": "1 Main",
+                "addressLine2": "Apt 2",
+                "city": "Dallas",
+                "state": "TX",
+                "postalCode": "75201",
+            }
+        ])
+        merged, findings = m.merge_deals_addresses(deals, addrs)
+        assert merged.loc[0, "address1"] == "1 Main"
+        assert merged.loc[0, "address2"] == "Apt 2"
+        assert merged.loc[0, "postal_code"] == "75201"
+
+    def test_unknown_column_emits_warning_with_available_list(self):
+        """When no candidate matches, the operator should be told what's in the file."""
+        deals = pd.DataFrame([{"_id": "d1", "dealAddressId": "a1"}])
+        addrs = pd.DataFrame([
+            {"_id": "a1", "rua": "1 Main", "cidade": "Dallas", "cep": "75201"}
+        ])
+        merged, findings = m.merge_deals_addresses(deals, addrs)
+        # No match → address1 should be blank
+        assert merged.loc[0, "address1"] == ""
+        # And we should get a warning listing the actual columns available
+        avail_finding = next(
+            f for f in findings if f.code == "ADDRESS_COLUMNS_AVAILABLE"
+        )
+        assert "rua" in avail_finding.message
+        assert "cidade" in avail_finding.message
+        # And at least one unresolved field warning (address1 / city / state)
+        assert any(
+            f.code == m.CODE_MISSING_COLUMN and "address1" in f.message
+            for f in findings
+        )
+
+    def test_fields_mapped_finding_surfaces_picks(self):
+        deals = pd.DataFrame([{"_id": "d1", "dealAddressId": "a1"}])
+        addrs = pd.DataFrame([
+            {
+                "_id": "a1",
+                "street": "1 Main",
+                "city": "Dallas",
+                "state": "TX",
+                "zipCode": "75201",
+            }
+        ])
+        _, findings = m.merge_deals_addresses(deals, addrs)
+        mapped = next(f for f in findings if f.code == "ADDRESS_FIELDS_MAPPED")
+        assert "address1=street" in mapped.message
+        assert "postal_code=zipCode" in mapped.message
+
 
 # ─── transform ───────────────────────────────────────────────────────────────
 class TestTransform:

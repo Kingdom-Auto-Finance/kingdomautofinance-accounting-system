@@ -17,7 +17,7 @@ import re
 from calendar import monthrange
 from collections import namedtuple
 from datetime import date, datetime
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import pandas as pd
 
@@ -300,32 +300,97 @@ def deduplicate_refinanced(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ─── MERGE DEALS + ADDRESSES ─────────────────────────────────────────────────
-# Standard column mapping applied to the dealaddresses CSV so downstream code
-# can use consistent field names. Change here to support alternate exports.
-ADDRESS_FIELD_MAP = {
-    "id_field":    "_id",          # MongoDB address _id
-    "address1":    "address",
-    "address2":    "address2",
-    "city":        "city",
-    "state":       "state",
-    "postal_code": "zip",          # May also be 'postalCode' or 'zipCode'
+# Each internal field name maps to an ORDERED LIST of candidate CSV column
+# names. The merge picks the first candidate that actually exists in the
+# uploaded CSV, so a variety of MongoDB export schemas Just Work.
+#
+# Extend any of these lists if your export uses a column name not covered.
+# The order matters: earlier entries win over later ones when both are present.
+ADDRESS_FIELD_MAP: Dict[str, List[str]] = {
+    "id_field":    ["_id", "id", "addressId"],
+    "address1":    [
+        "address",
+        "address1",
+        "addressLine1",
+        "address_line_1",
+        "addressLine",
+        "street",
+        "streetAddress",
+        "street_address",
+        "line1",
+        "line_1",
+    ],
+    "address2":    [
+        "address2",
+        "addressLine2",
+        "address_line_2",
+        "street2",
+        "line2",
+        "line_2",
+        "unit",
+        "suite",
+        "apt",
+        "aptSuite",
+    ],
+    "city":        ["city", "town", "locality", "municipality"],
+    "state":       ["state", "province", "region", "stateProvince"],
+    "postal_code": [
+        "zip",
+        "zipCode",
+        "zip_code",
+        "postal",
+        "postalCode",
+        "postal_code",
+        "postcode",
+        "postCode",
+    ],
 }
+
+
+def _resolve_field_map(
+    field_map: Dict[str, List[str]],
+    available_columns: List[str],
+) -> Tuple[Dict[str, str], List[str]]:
+    """Pick the first matching candidate per internal field.
+
+    Returns ``(rename_map, unresolved)`` where ``rename_map`` maps
+    csv_col -> internal_name for the fields that were found, and
+    ``unresolved`` is the list of internal names where no candidate matched.
+    """
+    available_set = {c.strip() for c in available_columns}
+    rename_map: Dict[str, str] = {}
+    unresolved: List[str] = []
+    for internal, candidates in field_map.items():
+        picked: str | None = None
+        for cand in candidates:
+            if cand in available_set and cand not in rename_map:
+                picked = cand
+                break
+        if picked is None:
+            unresolved.append(internal)
+        else:
+            rename_map[picked] = internal
+    return rename_map, unresolved
 
 
 def merge_deals_addresses(
     deals_df: pd.DataFrame,
     addresses_df: pd.DataFrame | None,
-    address_field_map: dict | None = None,
+    address_field_map: Dict[str, List[str]] | None = None,
 ) -> Tuple[pd.DataFrame, List[ValidationFinding]]:
     """Merge the deals DataFrame with the addresses DataFrame.
 
     Joins ``deals.dealAddressId`` to ``addresses._id``. Address columns are
-    renamed per ``address_field_map`` (or ``ADDRESS_FIELD_MAP`` by default).
-    Missing address columns are filled with empty strings and a finding is
-    emitted so the caller can surface the issue to operators.
+    renamed per ``address_field_map`` (or the module-level ``ADDRESS_FIELD_MAP``
+    by default). Each internal field (address1, city, etc.) maps to an ordered
+    list of candidate column names so different MongoDB export schemas are
+    accepted without reconfiguration.
 
-    Returns ``(merged_df, findings)`` where findings is a list of
-    ``ValidationFinding`` with INFO/WARNING severity.
+    On failure (e.g. the upload is missing address1 / city / postal_code) the
+    function emits an INFO finding listing the actual columns present in the
+    CSV so operators can see what names the source export used.
+
+    Returns ``(merged_df, findings)``.
     """
     findings: List[ValidationFinding] = []
     field_map = address_field_map or ADDRESS_FIELD_MAP
@@ -345,22 +410,53 @@ def merge_deals_addresses(
         return merged, findings
 
     addrs = addresses_df.copy()
-    rename_map: dict = {}
-    for internal, csv_col in field_map.items():
-        if csv_col in addrs.columns:
-            rename_map[csv_col] = internal
-        else:
-            findings.append(
-                ValidationFinding(
-                    severity="INFO",
-                    code=CODE_MISSING_COLUMN,
-                    message=(
-                        f"Address field '{csv_col}' not found in address CSV "
-                        f"(mapped from '{internal}')"
-                    ),
-                    affected_count=None,
-                )
+    available_cols = [str(c) for c in addrs.columns]
+
+    rename_map, unresolved = _resolve_field_map(field_map, available_cols)
+
+    # Always surface what columns exist so operators can diagnose mapping gaps.
+    findings.append(
+        ValidationFinding(
+            severity="INFO",
+            code="ADDRESS_COLUMNS_AVAILABLE",
+            message=(
+                "Address CSV columns detected: "
+                + ", ".join(available_cols)
+            ),
+            affected_count=len(available_cols),
+        )
+    )
+    # Report the picked column per internal field (helps confirm mapping).
+    if rename_map:
+        picked_summary = ", ".join(
+            f"{internal}={csv_col}"
+            for csv_col, internal in rename_map.items()
+        )
+        findings.append(
+            ValidationFinding(
+                severity="INFO",
+                code="ADDRESS_FIELDS_MAPPED",
+                message=f"Mapped address fields from CSV: {picked_summary}",
+                affected_count=None,
             )
+        )
+    for internal in unresolved:
+        # Optional fields don't need to emit anything noisy.
+        if internal == "address2":
+            continue
+        findings.append(
+            ValidationFinding(
+                severity="WARNING",
+                code=CODE_MISSING_COLUMN,
+                message=(
+                    f"Address field '{internal}' could not be matched to any "
+                    f"candidate column. Tried: {', '.join(field_map[internal])}. "
+                    f"Available columns: {', '.join(available_cols)}"
+                ),
+                affected_count=None,
+            )
+        )
+
     addrs = addrs.rename(columns=rename_map)
 
     if "id_field" not in addrs.columns:
@@ -368,7 +464,10 @@ def merge_deals_addresses(
             ValidationFinding(
                 severity="WARNING",
                 code=CODE_MISSING_COLUMN,
-                message="Could not identify address ID column - addresses dropped",
+                message=(
+                    "Could not identify address ID column - addresses dropped. "
+                    f"Tried candidates: {', '.join(field_map.get('id_field', []))}"
+                ),
                 affected_count=None,
             )
         )
