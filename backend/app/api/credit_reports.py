@@ -175,6 +175,60 @@ async def list_run_items(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BusinessFlagRequest(BaseModel):
+    is_business: bool
+    note: Optional[str] = None
+
+
+class ReviewDecisionRequest(BaseModel):
+    decision: str = Field(..., description="approve | exclude | defer")
+    metro2_status_code: Optional[str] = Field(
+        None, description="Required when decision is 'approve'"
+    )
+    fcra_dofi: Optional[str] = Field(None, description="YYYYMMDD, for 'approve'")
+    note: Optional[str] = None
+
+
+@router.post("/runs/{run_id}/items/{deal_id}/business-flag")
+async def set_business_flag(run_id: str, deal_id: str, body: BusinessFlagRequest):
+    """Toggle the business-account flag on a single run_item."""
+    try:
+        updated = svc.set_business_flag(
+            run_id=run_id,
+            deal_id=deal_id,
+            is_business=body.is_business,
+            note=body.note,
+        )
+        return updated
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"set_business_flag failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{run_id}/items/{deal_id}/review-decision")
+async def set_review_decision(
+    run_id: str, deal_id: str, body: ReviewDecisionRequest
+):
+    """Record the operator's decision on a review-queue item."""
+    try:
+        updated = svc.set_review_decision(
+            run_id=run_id,
+            deal_id=deal_id,
+            decision=body.decision,
+            metro2_status_code=body.metro2_status_code,
+            fcra_dofi=body.fcra_dofi,
+            note=body.note,
+        )
+        return updated
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"set_review_decision failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/runs/{run_id}/download/{bucket}")
 async def download_bucket_csv(run_id: str, bucket: str):
     """Regenerate and download a bucket's CSV for this run.

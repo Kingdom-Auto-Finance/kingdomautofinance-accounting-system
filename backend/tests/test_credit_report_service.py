@@ -304,6 +304,135 @@ class TestRenderCsv:
             svc.render_csv(result.run_id, "bogus")
 
 
+class TestSetBusinessFlag:
+    def _mk_run(self, shim, cycle1_bytes):
+        return svc.create_draft_run(
+            deal_csv_bytes=cycle1_bytes["deal"],
+            deal_filename="deals_cycle1.csv",
+            address_csv_bytes=cycle1_bytes["address"],
+            address_filename="addresses_cycle1.csv",
+            cycle_month=date(2026, 3, 31),
+        )
+
+    def test_flag_on_moves_ready_to_excluded(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # d001 is a ready account
+        updated = svc.set_business_flag(
+            run_id=result.run_id,
+            deal_id="d001",
+            is_business=True,
+            note="Checked, it's a business",
+        )
+        assert updated["bucket"] == "excluded"
+        assert updated["business_flag_source"] == "manual_on"
+        assert "Business" in updated["reason"]
+
+        # Ready count should drop from 4 to 3
+        run = svc.get_run(result.run_id)
+        assert run["run"]["ready_count"] == 3
+        assert run["run"]["excluded_count"] == 3
+
+    def test_flag_off_returns_to_ready(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # d005 (Taqueria LLC) is auto-flagged as business → excluded
+        updated = svc.set_business_flag(
+            run_id=result.run_id,
+            deal_id="d005",
+            is_business=False,
+            note="Actually a consumer account",
+        )
+        # d005 is Active, so after unflagging it should go to ready
+        assert updated["bucket"] == "ready"
+        assert updated["business_flag_source"] == "manual_off"
+        assert updated["metro2_row"] is not None
+
+        # Ready count should climb from 4 to 5
+        run = svc.get_run(result.run_id)
+        assert run["run"]["ready_count"] == 5
+        assert run["run"]["excluded_count"] == 1
+
+    def test_cannot_flag_finalized_run(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # Manually flip status to final to simulate a finalized run
+        supabase_shim.table("credit_report_runs").update({"status": "final"}).eq(
+            "id", result.run_id
+        ).execute()
+        with pytest.raises(ValueError, match="draft"):
+            svc.set_business_flag(
+                run_id=result.run_id, deal_id="d001", is_business=True
+            )
+
+
+class TestSetReviewDecision:
+    def _mk_run(self, shim, cycle1_bytes):
+        return svc.create_draft_run(
+            deal_csv_bytes=cycle1_bytes["deal"],
+            deal_filename="deals_cycle1.csv",
+            address_csv_bytes=cycle1_bytes["address"],
+            address_filename="addresses_cycle1.csv",
+            cycle_month=date(2026, 3, 31),
+        )
+
+    def test_approve_builds_metro2_row(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # d007 (Diana Evans) is Repossessed → review bucket
+        updated = svc.set_review_decision(
+            run_id=result.run_id,
+            deal_id="d007",
+            decision="approve",
+            metro2_status_code="95",
+            fcra_dofi="20251015",
+            note="Repossession complete, reporting as 95",
+        )
+        assert updated["bucket"] == "ready"
+        assert updated["review_decision"] == "approve"
+        assert updated["review_metro2_status_code"] == "95"
+        assert updated["review_fcra_dofi"] == "20251015"
+        assert updated["metro2_row"]["AccountStatus"] == "95"
+        assert updated["metro2_row"]["FCRA_DOFI"] == "20251015"
+
+    def test_approve_without_code_raises(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        with pytest.raises(ValueError, match="metro2_status_code"):
+            svc.set_review_decision(
+                run_id=result.run_id,
+                deal_id="d006",
+                decision="approve",
+                metro2_status_code=None,
+            )
+
+    def test_exclude_moves_to_excluded(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        updated = svc.set_review_decision(
+            run_id=result.run_id,
+            deal_id="d006",
+            decision="exclude",
+            note="Case dismissed, don't report",
+        )
+        assert updated["bucket"] == "excluded"
+        assert "Case dismissed" in updated["reason"]
+
+    def test_defer_stays_in_review(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        updated = svc.set_review_decision(
+            run_id=result.run_id,
+            deal_id="d006",
+            decision="defer",
+            note="Pending insurance ruling",
+        )
+        assert updated["bucket"] == "review"
+        assert updated["review_decision"] == "defer"
+
+    def test_invalid_decision_raises(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        with pytest.raises(ValueError, match="Invalid decision"):
+            svc.set_review_decision(
+                run_id=result.run_id,
+                deal_id="d006",
+                decision="bogus",
+            )
+
+
 class TestRenderReportTxt:
     def test_report_includes_counts(self, supabase_shim, cycle1_bytes):
         result = svc.create_draft_run(

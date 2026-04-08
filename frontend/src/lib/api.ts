@@ -299,6 +299,31 @@ export const creditReportAPI = {
 
   downloadReport: (runId: string) =>
     fetchAPI<string>(`/credit-reports/runs/${runId}/download-report`),
+
+  setBusinessFlag: (
+    runId: string,
+    dealId: string,
+    body: { is_business: boolean; note?: string }
+  ) =>
+    fetchAPI<RunItem>(`/credit-reports/runs/${runId}/items/${dealId}/business-flag`, {
+      method: 'POST',
+      body,
+    }),
+
+  setReviewDecision: (
+    runId: string,
+    dealId: string,
+    body: {
+      decision: 'approve' | 'exclude' | 'defer';
+      metro2_status_code?: string;
+      fcra_dofi?: string;
+      note?: string;
+    }
+  ) =>
+    fetchAPI<RunItem>(`/credit-reports/runs/${runId}/items/${dealId}/review-decision`, {
+      method: 'POST',
+      body,
+    }),
 };
 
 // Health check

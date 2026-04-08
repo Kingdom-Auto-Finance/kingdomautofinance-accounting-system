@@ -880,6 +880,234 @@ def render_csv(run_id: str, bucket: str) -> str:
     return df.to_csv(index=False)
 
 
+def _recompute_run_counts(run_id: str) -> Dict[str, int]:
+    """Recount run_items by bucket and update credit_report_runs."""
+    supabase = get_supabase_client()
+    counts = {b: 0 for b in ALL_BUCKETS}
+
+    # Paginate defensively even though realistic runs are < 10k items.
+    offset = 0
+    page_size = 1000
+    while True:
+        result = (
+            supabase.table("credit_report_run_items")
+            .select("bucket")
+            .eq("run_id", run_id)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = result.data or []
+        for row in batch:
+            counts[row["bucket"]] = counts.get(row["bucket"], 0) + 1
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    supabase.table("credit_report_runs").update(
+        {
+            "ready_count": counts[BUCKET_READY],
+            "review_count": counts[BUCKET_REVIEW],
+            "excluded_count": counts[BUCKET_EXCLUDED],
+            "carried_over_count": counts[BUCKET_CARRIED],
+        }
+    ).eq("id", run_id).execute()
+
+    return counts
+
+
+def _get_run_item(run_id: str, deal_id: str) -> Dict[str, Any]:
+    """Fetch a single run_item, raising ValueError if missing."""
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("credit_report_run_items")
+        .select("*")
+        .eq("run_id", run_id)
+        .eq("deal_id", deal_id)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        raise ValueError(f"Run item not found: run={run_id} deal={deal_id}")
+    return rows[0]
+
+
+def _assert_run_is_draft(run_id: str) -> Dict[str, Any]:
+    """Load the run header and confirm it is a draft (mutable)."""
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("credit_report_runs")
+        .select("*")
+        .eq("id", run_id)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        raise ValueError(f"Run not found: {run_id}")
+    run = rows[0]
+    if run["status"] != "draft":
+        raise ValueError(
+            f"Run {run_id} is '{run['status']}', not a draft - cannot modify"
+        )
+    return run
+
+
+def set_business_flag(
+    *,
+    run_id: str,
+    deal_id: str,
+    is_business: bool,
+    note: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Toggle the business flag on a single run_item.
+
+    Flag-on: move the row to ``excluded`` with a "manual business override"
+    reason, regardless of current bucket.
+
+    Flag-off: re-run the engine on this single row using the original
+    source_row so the account flows back to ready / review / excluded
+    according to its actual status. (The manual-off override keeps it from
+    being re-flagged by the regex on future uploads.)
+
+    The override is recorded on the run_item only. The persistent
+    ``credit_report_account_state`` row is NOT updated here - that happens
+    on ``finalize_run`` so draft-time changes of heart don't pollute the
+    cross-cycle memory.
+    """
+    _assert_run_is_draft(run_id)
+    item = _get_run_item(run_id, deal_id)
+    source = item.get("source_row") or {}
+
+    supabase = get_supabase_client()
+    updates: Dict[str, Any] = {
+        "business_flag_source": "manual_on" if is_business else "manual_off",
+    }
+
+    if is_business:
+        updates["bucket"] = BUCKET_EXCLUDED
+        reason = "Business override - manually flagged as business"
+        if note:
+            reason = f"{reason}. Note: {note}"
+        updates["reason"] = reason
+        updates["metro2_row"] = None
+    else:
+        # Re-classify the row, bypassing the is_business regex (the whole
+        # point of the manual_off flag is to override the regex). We honor
+        # EXCLUDED_STATUSES and REVIEW_STATUSES but otherwise build a ready
+        # metro2_row directly from the source.
+        as_of = (
+            supabase.table("credit_report_runs")
+            .select("as_of_date_str")
+            .eq("id", run_id)
+            .execute()
+            .data[0]["as_of_date_str"]
+        )
+        status_name = str(source.get("statusName", "")).strip()
+
+        if status_name in engine.EXCLUDED_STATUSES:
+            updates["bucket"] = BUCKET_EXCLUDED
+            updates["metro2_row"] = None
+            updates["reason"] = f"Status is '{status_name}' - excluded per business rules"
+        elif status_name in engine.REVIEW_STATUSES:
+            updates["bucket"] = BUCKET_REVIEW
+            updates["metro2_row"] = None
+            updates["reason"] = (
+                "IN LEGAL - verify insurance claim / pending status before reporting"
+                if status_name == "In Legal"
+                else f"Status '{status_name}' requires manual Metro 2 code assignment and FCRA_DOFI date"
+            )
+        elif status_name in engine.ACTIVE_STATUSES or status_name in engine.CLOSED_STATUSES:
+            updates["bucket"] = BUCKET_READY
+            updates["metro2_row"] = engine.build_metro2_row(source, as_of)
+            updates["reason"] = None
+        else:
+            updates["bucket"] = BUCKET_EXCLUDED
+            updates["metro2_row"] = None
+            updates["reason"] = f"Unknown status '{status_name}'"
+
+    supabase.table("credit_report_run_items").update(updates).eq(
+        "run_id", run_id
+    ).eq("deal_id", deal_id).execute()
+
+    _recompute_run_counts(run_id)
+    return _get_run_item(run_id, deal_id)
+
+
+def set_review_decision(
+    *,
+    run_id: str,
+    deal_id: str,
+    decision: str,
+    metro2_status_code: Optional[str] = None,
+    fcra_dofi: Optional[str] = None,
+    note: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record an operator's decision on a review-queue item.
+
+    Decisions:
+      - ``approve``: rebuild the metro2_row using the operator's Metro 2
+        status code + FCRA DOFI, move bucket to ``ready``.
+      - ``exclude``: move to ``excluded`` with a human note.
+      - ``defer``: leave in ``review`` but record the decision so the UI can
+        show "decision deferred" and the operator doesn't need to re-visit.
+
+    As with business flags, ``credit_report_account_state`` is NOT upserted
+    here - that happens only on finalize.
+    """
+    if decision not in ("approve", "exclude", "defer"):
+        raise ValueError(f"Invalid decision '{decision}'")
+
+    _assert_run_is_draft(run_id)
+    item = _get_run_item(run_id, deal_id)
+    source = item.get("source_row") or {}
+
+    supabase = get_supabase_client()
+    as_of = (
+        supabase.table("credit_report_runs")
+        .select("as_of_date_str")
+        .eq("id", run_id)
+        .execute()
+        .data[0]["as_of_date_str"]
+    )
+
+    updates: Dict[str, Any] = {
+        "review_decision": decision,
+        "review_metro2_status_code": metro2_status_code,
+        "review_fcra_dofi": fcra_dofi,
+        "review_note": note,
+    }
+
+    if decision == "approve":
+        if not metro2_status_code:
+            raise ValueError("metro2_status_code is required for 'approve'")
+        metro2_row = engine.build_metro2_row(
+            source,
+            as_of,
+            account_status_override=metro2_status_code,
+            fcra_dofi_override=fcra_dofi or None,
+        )
+        updates["bucket"] = BUCKET_READY
+        updates["metro2_row"] = metro2_row
+        updates["reason"] = None
+    elif decision == "exclude":
+        updates["bucket"] = BUCKET_EXCLUDED
+        updates["metro2_row"] = None
+        reason_text = f"Manual exclude: {note}" if note else "Manually excluded from reporting"
+        updates["reason"] = reason_text
+    else:  # defer
+        updates["bucket"] = BUCKET_REVIEW
+        updates["metro2_row"] = None
+        # Keep the existing review reason if there was one.
+
+    supabase.table("credit_report_run_items").update(updates).eq(
+        "run_id", run_id
+    ).eq("deal_id", deal_id).execute()
+
+    _recompute_run_counts(run_id)
+    return _get_run_item(run_id, deal_id)
+
+
 def render_report_txt(run_id: str) -> str:
     """Regenerate the human-readable .txt summary for a run.
 

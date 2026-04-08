@@ -20,6 +20,11 @@ import {
   Download,
   FileText,
   X,
+  Building2,
+  User,
+  Check,
+  Ban,
+  Clock,
 } from 'lucide-react';
 
 type BucketKey = 'ready' | 'review' | 'excluded' | 'carried';
@@ -137,6 +142,48 @@ export default function CreditReportsPage() {
     setSearchQuery(val);
     if (currentRun) {
       loadItems(currentRun.run.id, activeBucket, val);
+    }
+  };
+
+  // ── Decision handlers ────────────────────────────────────────────────
+  const refreshAfterMutation = async () => {
+    if (!currentRun) return;
+    // Reload the run detail (so counts refresh) and the current bucket list.
+    const detail = await creditReportAPI.getRun(currentRun.run.id);
+    setCurrentRun(detail);
+    loadItems(detail.run.id, activeBucket, searchQuery);
+  };
+
+  const handleSetBusinessFlag = async (dealId: string, isBusiness: boolean) => {
+    if (!currentRun) return;
+    try {
+      await creditReportAPI.setBusinessFlag(currentRun.run.id, dealId, {
+        is_business: isBusiness,
+      });
+      await refreshAfterMutation();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update flag');
+    }
+  };
+
+  const handleSetReviewDecision = async (
+    dealId: string,
+    decision: 'approve' | 'exclude' | 'defer',
+    metro2_status_code?: string,
+    fcra_dofi?: string,
+    note?: string
+  ) => {
+    if (!currentRun) return;
+    try {
+      await creditReportAPI.setReviewDecision(currentRun.run.id, dealId, {
+        decision,
+        metro2_status_code,
+        fcra_dofi,
+        note,
+      });
+      await refreshAfterMutation();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save decision');
     }
   };
 
@@ -320,6 +367,9 @@ export default function CreditReportsPage() {
               items={bucketItems}
               total={bucketTotal}
               loading={bucketLoading}
+              isDraft={currentRun.run.status === 'draft'}
+              onSetBusinessFlag={handleSetBusinessFlag}
+              onSetReviewDecision={handleSetReviewDecision}
             />
           </div>
         )}
@@ -497,11 +547,23 @@ function BucketTable({
   items,
   total,
   loading,
+  isDraft,
+  onSetBusinessFlag,
+  onSetReviewDecision,
 }: {
   bucket: BucketKey;
   items: RunItem[];
   total: number;
   loading: boolean;
+  isDraft: boolean;
+  onSetBusinessFlag: (dealId: string, isBusiness: boolean) => void;
+  onSetReviewDecision: (
+    dealId: string,
+    decision: 'approve' | 'exclude' | 'defer',
+    metro2_status_code?: string,
+    fcra_dofi?: string,
+    note?: string
+  ) => void;
 }) {
   if (loading) {
     return (
@@ -518,11 +580,11 @@ function BucketTable({
 
   const headers =
     bucket === 'ready'
-      ? ['Deal ID', 'Client name', 'Status', 'Loan amount', 'Balance', 'Opened']
+      ? ['Deal ID', 'Client name', 'Status', 'Loan amount', 'Balance', 'Opened', 'Actions']
       : bucket === 'review'
-      ? ['Deal ID', 'Client name', 'Status', 'Days past due', 'Reason']
+      ? ['Deal ID', 'Client name', 'Status', 'Days past due', 'Reason', 'Decision']
       : bucket === 'excluded'
-      ? ['Deal ID', 'Client name', 'Status', 'Reason', 'Flag source']
+      ? ['Deal ID', 'Client name', 'Status', 'Reason', 'Flag source', 'Actions']
       : ['Deal ID', 'Client name', 'Status', 'Last reported'];
 
   return (
@@ -546,7 +608,14 @@ function BucketTable({
           </thead>
           <tbody className="divide-y divide-border">
             {items.map(item => (
-              <BucketRow key={item.id} bucket={bucket} item={item} />
+              <BucketRow
+                key={item.id}
+                bucket={bucket}
+                item={item}
+                isDraft={isDraft}
+                onSetBusinessFlag={onSetBusinessFlag}
+                onSetReviewDecision={onSetReviewDecision}
+              />
             ))}
           </tbody>
         </table>
@@ -555,39 +624,116 @@ function BucketTable({
   );
 }
 
-function BucketRow({ bucket, item }: { bucket: BucketKey; item: RunItem }) {
+function BucketRow({
+  bucket,
+  item,
+  isDraft,
+  onSetBusinessFlag,
+  onSetReviewDecision,
+}: {
+  bucket: BucketKey;
+  item: RunItem;
+  isDraft: boolean;
+  onSetBusinessFlag: (dealId: string, isBusiness: boolean) => void;
+  onSetReviewDecision: (
+    dealId: string,
+    decision: 'approve' | 'exclude' | 'defer',
+    metro2_status_code?: string,
+    fcra_dofi?: string,
+    note?: string
+  ) => void;
+}) {
   const src = item.source_row || {};
   const dealId = item.deal_id;
   const clientName = String(src.clientName ?? '');
   const statusName = String(src.statusName ?? '');
+  const [expandedReview, setExpandedReview] = useState(false);
 
   if (bucket === 'ready') {
     const m2 = item.metro2_row || {};
     return (
       <tr className="hover:bg-muted/30 transition-colors">
         <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
-        <td className="px-4 py-3 text-sm text-foreground">{clientName}</td>
+        <td className="px-4 py-3 text-sm text-foreground">
+          {clientName}
+          {item.review_decision === 'approve' && (
+            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
+              Auto-applied
+            </span>
+          )}
+        </td>
         <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
         <td className="px-4 py-3 text-sm text-foreground">
           ${m2.HighestCreditOrOrigLoanAmt ?? '0'}
         </td>
         <td className="px-4 py-3 text-sm text-foreground">${m2.CurrentBalance ?? '0'}</td>
         <td className="px-4 py-3 text-sm text-foreground">{m2.DateOpened ?? ''}</td>
+        <td className="px-4 py-3 text-sm">
+          {isDraft && (
+            <button
+              onClick={() => {
+                if (confirm(`Flag ${clientName} (${dealId}) as a business account?`)) {
+                  onSetBusinessFlag(dealId, true);
+                }
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/70 rounded border border-border"
+              title="Move to excluded as a business entity"
+            >
+              <Building2 className="w-3 h-3" />
+              Flag business
+            </button>
+          )}
+        </td>
       </tr>
     );
   }
+
   if (bucket === 'review') {
     return (
-      <tr className="hover:bg-muted/30 transition-colors">
-        <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
-        <td className="px-4 py-3 text-sm text-foreground">{clientName}</td>
-        <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
-        <td className="px-4 py-3 text-sm text-foreground">{String(src.daysPastDue ?? '')}</td>
-        <td className="px-4 py-3 text-sm text-muted-foreground">{item.reason ?? ''}</td>
-      </tr>
+      <>
+        <tr className="hover:bg-muted/30 transition-colors">
+          <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
+          <td className="px-4 py-3 text-sm text-foreground">{clientName}</td>
+          <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
+          <td className="px-4 py-3 text-sm text-foreground">
+            {String(src.daysPastDue ?? '')}
+          </td>
+          <td className="px-4 py-3 text-sm text-muted-foreground">{item.reason ?? ''}</td>
+          <td className="px-4 py-3 text-sm">
+            {isDraft ? (
+              <button
+                onClick={() => setExpandedReview(e => !e)}
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                {expandedReview ? 'Close' : 'Decide'}
+              </button>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                {item.review_decision ?? 'pending'}
+              </span>
+            )}
+          </td>
+        </tr>
+        {expandedReview && isDraft && (
+          <tr>
+            <td colSpan={6} className="px-4 py-4 bg-muted/20 border-t border-border">
+              <ReviewDecisionForm
+                item={item}
+                onSubmit={(decision, code, dofi, note) => {
+                  setExpandedReview(false);
+                  onSetReviewDecision(dealId, decision, code, dofi, note);
+                }}
+                onCancel={() => setExpandedReview(false)}
+              />
+            </td>
+          </tr>
+        )}
+      </>
     );
   }
+
   if (bucket === 'excluded') {
+    const wasBusiness = item.business_flag_source === 'auto' || item.business_flag_source === 'manual_on';
     return (
       <tr className="hover:bg-muted/30 transition-colors">
         <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
@@ -597,9 +743,30 @@ function BucketRow({ bucket, item }: { bucket: BucketKey; item: RunItem }) {
         <td className="px-4 py-3 text-sm text-muted-foreground">
           {item.business_flag_source ?? '-'}
         </td>
+        <td className="px-4 py-3 text-sm">
+          {isDraft && wasBusiness && (
+            <button
+              onClick={() => {
+                if (
+                  confirm(
+                    `Unflag ${clientName} (${dealId}) - mark as a consumer account?`
+                  )
+                ) {
+                  onSetBusinessFlag(dealId, false);
+                }
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/70 rounded border border-border"
+              title="Override business detection and mark as consumer"
+            >
+              <User className="w-3 h-3" />
+              Unflag
+            </button>
+          )}
+        </td>
       </tr>
     );
   }
+
   // carried
   return (
     <tr className="hover:bg-muted/30 transition-colors">
@@ -610,6 +777,128 @@ function BucketRow({ bucket, item }: { bucket: BucketKey; item: RunItem }) {
         Missing from current upload
       </td>
     </tr>
+  );
+}
+
+function ReviewDecisionForm({
+  item,
+  onSubmit,
+  onCancel,
+}: {
+  item: RunItem;
+  onSubmit: (
+    decision: 'approve' | 'exclude' | 'defer',
+    metro2_status_code?: string,
+    fcra_dofi?: string,
+    note?: string
+  ) => void;
+  onCancel: () => void;
+}) {
+  const [decision, setDecision] = useState<'approve' | 'exclude' | 'defer'>('approve');
+  const [code, setCode] = useState(item.review_metro2_status_code ?? '');
+  const [dofi, setDofi] = useState(item.review_fcra_dofi ?? '');
+  const [note, setNote] = useState(item.review_note ?? '');
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  const handleSave = () => {
+    setErrMsg(null);
+    if (decision === 'approve') {
+      if (!code.trim()) {
+        setErrMsg('Metro 2 status code is required when approving.');
+        return;
+      }
+      if (dofi && !/^\d{8}$/.test(dofi.trim())) {
+        setErrMsg('FCRA DOFI must be 8 digits (YYYYMMDD).');
+        return;
+      }
+    }
+    onSubmit(decision, code.trim() || undefined, dofi.trim() || undefined, note.trim() || undefined);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        {(['approve', 'exclude', 'defer'] as const).map(d => (
+          <button
+            key={d}
+            onClick={() => setDecision(d)}
+            className={`px-3 py-1.5 text-sm rounded border transition-colors flex items-center gap-1 ${
+              decision === d
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-card text-foreground border-border hover:bg-muted/50'
+            }`}
+          >
+            {d === 'approve' && <Check className="w-3 h-3" />}
+            {d === 'exclude' && <Ban className="w-3 h-3" />}
+            {d === 'defer' && <Clock className="w-3 h-3" />}
+            {d.charAt(0).toUpperCase() + d.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {decision === 'approve' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-foreground mb-1">
+              Metro 2 status code
+              <span className="text-red-600">*</span>
+            </label>
+            <input
+              type="text"
+              value={code}
+              onChange={e => setCode(e.target.value)}
+              placeholder="e.g. 64, 94, 95, 97"
+              className="w-full px-3 py-1.5 text-sm border border-input rounded bg-card text-foreground"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-foreground mb-1">
+              FCRA DOFI (YYYYMMDD)
+            </label>
+            <input
+              type="text"
+              value={dofi}
+              onChange={e => setDofi(e.target.value)}
+              placeholder="20251015"
+              maxLength={8}
+              className="w-full px-3 py-1.5 text-sm border border-input rounded bg-card text-foreground"
+            />
+          </div>
+        </div>
+      )}
+
+      <div>
+        <label className="block text-xs font-medium text-foreground mb-1">
+          Note (optional)
+        </label>
+        <input
+          type="text"
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          placeholder="Context for the decision"
+          className="w-full px-3 py-1.5 text-sm border border-input rounded bg-card text-foreground"
+        />
+      </div>
+
+      {errMsg && (
+        <div className="text-xs text-red-600">{errMsg}</div>
+      )}
+
+      <div className="flex gap-2 justify-end">
+        <button
+          onClick={onCancel}
+          className="px-3 py-1.5 text-sm bg-muted text-foreground rounded hover:bg-muted/70"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+        >
+          Save decision
+        </button>
+      </div>
+    </div>
   );
 }
 
