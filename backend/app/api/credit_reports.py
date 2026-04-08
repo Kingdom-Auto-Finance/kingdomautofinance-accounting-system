@@ -281,6 +281,44 @@ async def download_bucket_csv(run_id: str, bucket: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/rules")
+async def get_rules():
+    """Return the current Metro 2 rule configuration used by the engine.
+
+    This is read-only in v1. The constants live in
+    ``backend/app/libs/metro2_engine.py``; to edit them, update that file
+    and redeploy the backend. A future version may move them into the
+    database for in-UI editing.
+    """
+    from app.libs import metro2_engine as engine
+
+    return {
+        "experian_config": {
+            "identification_number": engine.IDENTIFICATION_NUMBER,
+            "portfolio_type": engine.PORTFOLIO_TYPE,
+            "account_type": engine.ACCOUNT_TYPE,
+            "interest_type": engine.INTEREST_TYPE,
+            "ecoa_code": engine.ECOA_CODE,
+            "country_code": engine.COUNTRY_CODE,
+            "address_indicator": engine.ADDRESS_INDICATOR,
+        },
+        "status_buckets": {
+            "excluded": sorted(engine.EXCLUDED_STATUSES),
+            "review": sorted(engine.REVIEW_STATUSES),
+            "active_reported_as_11": sorted(engine.ACTIVE_STATUSES),
+            "closed_reported_as_13": sorted(engine.CLOSED_STATUSES),
+        },
+        "business_pattern": engine.BUSINESS_PATTERN.pattern,
+        "frequency_map": {
+            k: {"metro2_code": v[0]}
+            for k, v in engine.FREQUENCY_MAP.items()
+        },
+        "address_field_candidates": engine.ADDRESS_FIELD_MAP,
+        "metro2_columns": list(engine.METRO2_COLUMNS),
+        "editability": "read-only in v1 - edit backend/app/libs/metro2_engine.py and redeploy",
+    }
+
+
 @router.get("/runs/{run_id}/download-report")
 async def download_report_txt(run_id: str):
     """Regenerate the human-readable .txt summary for a run."""

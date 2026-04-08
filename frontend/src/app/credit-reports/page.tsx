@@ -64,6 +64,10 @@ export default function CreditReportsPage() {
   const [bucketLoading, setBucketLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showInstructions, setShowInstructions] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   // ── Initial load ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -85,23 +89,35 @@ export default function CreditReportsPage() {
     }
   };
 
-  // ── Reload items whenever active bucket or run changes ──────────────
+  // ── Reload items whenever active bucket, run, page, or page size changes ──
   useEffect(() => {
     if (currentRun) {
-      loadItems(currentRun.run.id, activeBucket, searchQuery);
+      loadItems(currentRun.run.id, activeBucket, searchQuery, page, pageSize);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentRun?.run.id, activeBucket]);
+  }, [currentRun?.run.id, activeBucket, page, pageSize]);
+
+  // Reset to page 1 whenever the bucket switches so we don't land past the end.
+  useEffect(() => {
+    setPage(1);
+    setSortKey(null);
+  }, [activeBucket, currentRun?.run.id]);
 
   const loadItems = useCallback(
-    async (runId: string, bucket: BucketKey, query: string) => {
+    async (
+      runId: string,
+      bucket: BucketKey,
+      query: string,
+      pageArg: number,
+      pageSizeArg: number
+    ) => {
       setBucketLoading(true);
       try {
         const resp = await creditReportAPI.listItems(runId, {
           bucket,
           q: query || undefined,
-          page: 1,
-          page_size: 200,
+          page: pageArg,
+          page_size: pageSizeArg,
         });
         setBucketItems(resp.data);
         setBucketTotal(resp.total);
@@ -138,13 +154,44 @@ export default function CreditReportsPage() {
     }
   };
 
-  // ── Search debounced reload ──────────────────────────────────────────
+  // ── Search handler (reset to page 1 on query change) ─────────────────
   const handleSearchChange = (val: string) => {
     setSearchQuery(val);
+    setPage(1);
     if (currentRun) {
-      loadItems(currentRun.run.id, activeBucket, val);
+      loadItems(currentRun.run.id, activeBucket, val, 1, pageSize);
     }
   };
+
+  // ── Sort handler (toggles direction on repeated clicks) ──────────────
+  const handleSortClick = (key: string) => {
+    if (sortKey === key) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  // Client-side sort of the currently-loaded page.
+  const sortedItems = useMemo(() => {
+    if (!sortKey) return bucketItems;
+    const copy = [...bucketItems];
+    copy.sort((a, b) => {
+      const av = extractSortValue(a, sortKey);
+      const bv = extractSortValue(b, sortKey);
+      if (av === bv) return 0;
+      if (av === null || av === undefined || av === '') return 1;
+      if (bv === null || bv === undefined || bv === '') return -1;
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return sortDir === 'asc' ? av - bv : bv - av;
+      }
+      const sa = String(av).toLowerCase();
+      const sb = String(bv).toLowerCase();
+      return sortDir === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa);
+    });
+    return copy;
+  }, [bucketItems, sortKey, sortDir]);
 
   // ── Decision handlers ────────────────────────────────────────────────
   const refreshAfterMutation = async () => {
@@ -152,7 +199,7 @@ export default function CreditReportsPage() {
     // Reload the run detail (so counts refresh) and the current bucket list.
     const detail = await creditReportAPI.getRun(currentRun.run.id);
     setCurrentRun(detail);
-    loadItems(detail.run.id, activeBucket, searchQuery);
+    loadItems(detail.run.id, activeBucket, searchQuery, page, pageSize);
   };
 
   const handleSetBusinessFlag = async (dealId: string, isBusiness: boolean) => {
@@ -209,7 +256,7 @@ export default function CreditReportsPage() {
       });
       setCurrentRun(detail);
       await loadRuns();
-      loadItems(detail.run.id, activeBucket, searchQuery);
+      loadItems(detail.run.id, activeBucket, searchQuery, page, pageSize);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Finalize failed');
     }
@@ -380,10 +427,20 @@ export default function CreditReportsPage() {
             {/* Items table */}
             <BucketTable
               bucket={activeBucket}
-              items={bucketItems}
+              items={sortedItems}
               total={bucketTotal}
               loading={bucketLoading}
               isDraft={currentRun.run.status === 'draft'}
+              page={page}
+              pageSize={pageSize}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSortClick={handleSortClick}
+              onPageChange={setPage}
+              onPageSizeChange={size => {
+                setPageSize(size);
+                setPage(1);
+              }}
               onSetBusinessFlag={handleSetBusinessFlag}
               onSetReviewDecision={handleSetReviewDecision}
             />
@@ -425,12 +482,61 @@ export default function CreditReportsPage() {
             }}
           />
         )}
+
+        {/* ── Rules reference ─────────────────────────────────────── */}
+        <RulesReferenceCard />
       </div>
 
       {/* ── MongoDB export instructions modal ──────────────────────── */}
       {showInstructions && <MongoInstructionsModal onClose={() => setShowInstructions(false)} />}
     </Layout>
   );
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+/** Format a Metro 2 YYYYMMDD string as MM/DD/YYYY for UI display. */
+function formatMetro2Date(value: any): string {
+  if (value === null || value === undefined || value === '') return '';
+  const s = String(value).trim();
+  if (!/^\d{8}$/.test(s)) return s;
+  return `${s.slice(4, 6)}/${s.slice(6, 8)}/${s.slice(0, 4)}`;
+}
+
+/** Format a whole-dollar amount string like "12345" as "$12,345". */
+function formatWholeDollar(value: any): string {
+  if (value === null || value === undefined || value === '') return '$0';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return `$${value}`;
+  return `$${n.toLocaleString('en-US')}`;
+}
+
+/** Extract the value the sort handler should compare for a given key. */
+function extractSortValue(item: RunItem, key: string): any {
+  const src = item.source_row || {};
+  const m2 = item.metro2_row || {};
+  switch (key) {
+    case 'deal_id':
+      return item.deal_id;
+    case 'client_name':
+      return String(src.clientName ?? '');
+    case 'status_name':
+      return String(src.statusName ?? '');
+    case 'loan_amount':
+      return Number(m2.HighestCreditOrOrigLoanAmt ?? src.loanAmount ?? 0);
+    case 'current_balance':
+      return Number(m2.CurrentBalance ?? src.accountBalance ?? 0);
+    case 'date_opened':
+      // YYYYMMDD strings sort chronologically with a plain string compare.
+      return String(m2.DateOpened ?? src.loanDate ?? '');
+    case 'days_past_due':
+      return Number(src.daysPastDue ?? 0);
+    case 'reason':
+      return String(item.reason ?? '');
+    case 'business_flag_source':
+      return String(item.business_flag_source ?? '');
+    default:
+      return '';
+  }
 }
 
 // ─── Subcomponents (inlined for Step 5; extracted later) ────────────────────
@@ -592,12 +698,58 @@ function FileDropZone({
   );
 }
 
+type ColumnDef = {
+  label: string;
+  sortKey: string | null; // null = unsortable (e.g. Actions column)
+};
+
+const COLUMN_DEFS: Record<BucketKey, ColumnDef[]> = {
+  ready: [
+    { label: 'Deal ID', sortKey: 'deal_id' },
+    { label: 'Client name', sortKey: 'client_name' },
+    { label: 'Status', sortKey: 'status_name' },
+    { label: 'Loan amount', sortKey: 'loan_amount' },
+    { label: 'Balance', sortKey: 'current_balance' },
+    { label: 'Loan date', sortKey: 'date_opened' },
+    { label: 'Actions', sortKey: null },
+  ],
+  review: [
+    { label: 'Deal ID', sortKey: 'deal_id' },
+    { label: 'Client name', sortKey: 'client_name' },
+    { label: 'Status', sortKey: 'status_name' },
+    { label: 'Days past due', sortKey: 'days_past_due' },
+    { label: 'Reason', sortKey: 'reason' },
+    { label: 'Decision', sortKey: null },
+  ],
+  excluded: [
+    { label: 'Deal ID', sortKey: 'deal_id' },
+    { label: 'Client name', sortKey: 'client_name' },
+    { label: 'Status', sortKey: 'status_name' },
+    { label: 'Reason', sortKey: 'reason' },
+    { label: 'Flag source', sortKey: 'business_flag_source' },
+    { label: 'Actions', sortKey: null },
+  ],
+  carried: [
+    { label: 'Deal ID', sortKey: 'deal_id' },
+    { label: 'Client name', sortKey: 'client_name' },
+    { label: 'Status', sortKey: 'status_name' },
+    { label: 'Last reported', sortKey: null },
+  ],
+};
+
 function BucketTable({
   bucket,
   items,
   total,
   loading,
   isDraft,
+  page,
+  pageSize,
+  sortKey,
+  sortDir,
+  onSortClick,
+  onPageChange,
+  onPageSizeChange,
   onSetBusinessFlag,
   onSetReviewDecision,
 }: {
@@ -606,6 +758,13 @@ function BucketTable({
   total: number;
   loading: boolean;
   isDraft: boolean;
+  page: number;
+  pageSize: number;
+  sortKey: string | null;
+  sortDir: 'asc' | 'desc';
+  onSortClick: (key: string) => void;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
   onSetBusinessFlag: (dealId: string, isBusiness: boolean) => void;
   onSetReviewDecision: (
     dealId: string,
@@ -628,32 +787,57 @@ function BucketTable({
     );
   }
 
-  const headers =
-    bucket === 'ready'
-      ? ['Deal ID', 'Client name', 'Status', 'Loan amount', 'Balance', 'Opened', 'Actions']
-      : bucket === 'review'
-      ? ['Deal ID', 'Client name', 'Status', 'Days past due', 'Reason', 'Decision']
-      : bucket === 'excluded'
-      ? ['Deal ID', 'Client name', 'Status', 'Reason', 'Flag source', 'Actions']
-      : ['Deal ID', 'Client name', 'Status', 'Last reported'];
+  const columns = COLUMN_DEFS[bucket];
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const rangeStart = (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
 
   return (
     <div>
-      <div className="text-sm text-muted-foreground mb-2">
-        Showing {items.length} of {total}
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div className="text-sm text-muted-foreground">
+          Showing {rangeStart}–{rangeEnd} of {total}
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <label className="text-muted-foreground">Rows per page:</label>
+          <select
+            value={pageSize}
+            onChange={e => onPageSizeChange(Number(e.target.value))}
+            className="px-2 py-1 border border-input rounded bg-card text-foreground"
+          >
+            {[50, 100, 200, 500].map(n => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
       <div className="overflow-x-auto border border-border rounded-lg">
         <table className="w-full">
           <thead className="bg-muted/50">
             <tr>
-              {headers.map(h => (
-                <th
-                  key={h}
-                  className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase"
-                >
-                  {h}
-                </th>
-              ))}
+              {columns.map(col => {
+                const isSorted = col.sortKey && sortKey === col.sortKey;
+                return (
+                  <th
+                    key={col.label}
+                    onClick={() => col.sortKey && onSortClick(col.sortKey)}
+                    className={`px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase ${
+                      col.sortKey ? 'cursor-pointer select-none hover:bg-muted' : ''
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {col.label}
+                      {isSorted && (
+                        <span aria-hidden="true">
+                          {sortDir === 'asc' ? '▲' : '▼'}
+                        </span>
+                      )}
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -670,6 +854,27 @@ function BucketTable({
           </tbody>
         </table>
       </div>
+      {totalPages > 1 && (
+        <div className="mt-3 flex items-center justify-end gap-2 text-sm">
+          <button
+            onClick={() => onPageChange(Math.max(1, page - 1))}
+            disabled={page <= 1}
+            className="px-3 py-1.5 border border-border rounded bg-card text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Previous
+          </button>
+          <span className="text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <button
+            onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+            disabled={page >= totalPages}
+            className="px-3 py-1.5 border border-border rounded bg-card text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -714,10 +919,14 @@ function BucketRow({
         </td>
         <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
         <td className="px-4 py-3 text-sm text-foreground">
-          ${m2.HighestCreditOrOrigLoanAmt ?? '0'}
+          {formatWholeDollar(m2.HighestCreditOrOrigLoanAmt)}
         </td>
-        <td className="px-4 py-3 text-sm text-foreground">${m2.CurrentBalance ?? '0'}</td>
-        <td className="px-4 py-3 text-sm text-foreground">{m2.DateOpened ?? ''}</td>
+        <td className="px-4 py-3 text-sm text-foreground">
+          {formatWholeDollar(m2.CurrentBalance)}
+        </td>
+        <td className="px-4 py-3 text-sm text-foreground">
+          {formatMetro2Date(m2.DateOpened)}
+        </td>
         <td className="px-4 py-3 text-sm">
           {isDraft && (
             <button
@@ -1224,6 +1433,229 @@ function RunHistoryCard({
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function RulesReferenceCard() {
+  const [expanded, setExpanded] = useState(false);
+  const [rules, setRules] = useState<Awaited<
+    ReturnType<typeof creditReportAPI.getRules>
+  > | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (expanded && !rules && !loadErr) {
+      creditReportAPI
+        .getRules()
+        .then(setRules)
+        .catch(e =>
+          setLoadErr(e instanceof Error ? e.message : 'Failed to load rules')
+        );
+    }
+  }, [expanded, rules, loadErr]);
+
+  return (
+    <div className="bg-card p-6 rounded-lg shadow border border-border">
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="flex items-center justify-between w-full text-left"
+      >
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">
+            Metro 2 rules reference
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            The business rules, status enums, and field mappings currently used
+            by the engine. Read-only in v1.
+          </p>
+        </div>
+        <span className="text-sm text-blue-600 hover:text-blue-700">
+          {expanded ? 'Collapse' : 'Expand'}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-5 space-y-5">
+          {loadErr && (
+            <div className="text-sm text-red-600">{loadErr}</div>
+          )}
+          {!rules && !loadErr && (
+            <div className="text-sm text-muted-foreground">Loading rules...</div>
+          )}
+          {rules && (
+            <>
+              <RuleSection
+                title="Experian configuration"
+                description="Subscriber code and fixed-policy constants sent on every Metro 2 row."
+                pairs={Object.entries(rules.experian_config).map(([k, v]) => [
+                  k.replace(/_/g, ' '),
+                  v,
+                ])}
+              />
+
+              <RuleSection
+                title="Status buckets"
+                description="Which MongoDB statusName values land in which Metro 2 bucket."
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <RulePillList
+                    label="Excluded from reporting"
+                    color="gray"
+                    values={rules.status_buckets.excluded}
+                  />
+                  <RulePillList
+                    label="Needs review"
+                    color="amber"
+                    values={rules.status_buckets.review}
+                  />
+                  <RulePillList
+                    label="Reported as status 11 (Current)"
+                    color="green"
+                    values={rules.status_buckets.active_reported_as_11}
+                  />
+                  <RulePillList
+                    label="Reported as status 13 (Paid/closed)"
+                    color="blue"
+                    values={rules.status_buckets.closed_reported_as_13}
+                  />
+                </div>
+              </RuleSection>
+
+              <RuleSection
+                title="Business-name detection regex"
+                description="Any client name matching this pattern is auto-flagged as a business entity and excluded. Team members can override per account from the Ready / Excluded tabs above."
+              >
+                <div className="font-mono text-xs bg-muted/30 rounded p-3 break-all">
+                  {rules.business_pattern}
+                </div>
+              </RuleSection>
+
+              <RuleSection
+                title="Payment frequency mapping"
+                description="MongoDB 'frequency' value → Metro 2 TermsFrequency code."
+              >
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {Object.entries(rules.frequency_map).map(([k, v]) => (
+                    <div
+                      key={k}
+                      className="px-3 py-2 border border-border rounded bg-muted/20 text-sm"
+                    >
+                      <div className="font-medium text-foreground">{k}</div>
+                      <div className="text-muted-foreground text-xs">
+                        Metro 2 code: <span className="font-mono">{v.metro2_code}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </RuleSection>
+
+              <RuleSection
+                title="Address CSV column candidates"
+                description="The uploader tries each candidate column name in order and picks the first one that exists in your CSV. Extend these lists in the backend if your mongoexport uses a name not listed."
+              >
+                <div className="space-y-2">
+                  {Object.entries(rules.address_field_candidates).map(
+                    ([internal, candidates]) => (
+                      <div key={internal} className="flex items-start gap-3">
+                        <div className="w-32 flex-shrink-0 font-medium text-foreground text-sm">
+                          {internal}
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {candidates.map(c => (
+                            <span
+                              key={c}
+                              className="px-2 py-0.5 text-xs bg-muted rounded border border-border font-mono"
+                            >
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+              </RuleSection>
+
+              <div className="text-xs text-muted-foreground border-t border-border pt-4">
+                <p>{rules.editability}</p>
+                <p className="mt-1">
+                  Source file:{' '}
+                  <span className="font-mono">
+                    backend/app/libs/metro2_engine.py
+                  </span>
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RuleSection({
+  title,
+  description,
+  pairs,
+  children,
+}: {
+  title: string;
+  description: string;
+  pairs?: [string, string][];
+  children?: React.ReactNode;
+}) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <p className="text-xs text-muted-foreground mb-3">{description}</p>
+      {pairs && (
+        <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
+          {pairs.map(([k, v]) => (
+            <div key={k} className="flex justify-between border-b border-border py-1">
+              <dt className="text-sm text-muted-foreground capitalize">{k}</dt>
+              <dd className="text-sm font-mono text-foreground">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function RulePillList({
+  label,
+  color,
+  values,
+}: {
+  label: string;
+  color: 'gray' | 'amber' | 'green' | 'blue';
+  values: string[];
+}) {
+  const colorClass = {
+    gray: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300',
+    amber: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+    green: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+    blue: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  }[color];
+  return (
+    <div>
+      <div className="text-xs font-medium text-muted-foreground mb-1">{label}</div>
+      <div className="flex flex-wrap gap-1">
+        {values.length === 0 ? (
+          <span className="text-xs text-muted-foreground italic">(none)</span>
+        ) : (
+          values.map(v => (
+            <span
+              key={v}
+              className={`px-2 py-0.5 rounded text-xs ${colorClass}`}
+            >
+              {v}
+            </span>
+          ))
+        )}
+      </div>
     </div>
   );
 }

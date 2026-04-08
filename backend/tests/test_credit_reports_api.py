@@ -138,6 +138,25 @@ class TestGetRunAndItems:
         assert resp.status_code == 400
 
 
+class TestGetRules:
+    def test_returns_all_rule_categories(self, client):
+        resp = client.get("/api/v1/credit-reports/rules")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "experian_config" in body
+        assert body["experian_config"]["identification_number"] == "3983542"
+        assert "status_buckets" in body
+        assert "Cancelled" in body["status_buckets"]["excluded"]
+        assert "In Legal" in body["status_buckets"]["review"]
+        assert "Active" in body["status_buckets"]["active_reported_as_11"]
+        assert "business_pattern" in body
+        assert "frequency_map" in body
+        assert body["frequency_map"]["bi-weekly"]["metro2_code"] == "B"
+        assert "address_field_candidates" in body
+        assert "street" in body["address_field_candidates"]["address1"]
+        assert "zipCode" in body["address_field_candidates"]["postal_code"]
+
+
 class TestDownload:
     def test_download_ready_csv(self, client):
         draft_resp = client.post(
