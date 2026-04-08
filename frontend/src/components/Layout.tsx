@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
+  ShieldCheck,
 } from 'lucide-react';
 
 const navigation: { name: string; href: string; icon: LucideIcon }[] = [
@@ -24,6 +25,7 @@ const navigation: { name: string; href: string; icon: LucideIcon }[] = [
   { name: 'Amortization', href: '/amortization', icon: FileText },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
   { name: 'Audit', href: '/audit', icon: ClipboardCheck },
+  { name: 'Credit Reports', href: '/credit-reports', icon: ShieldCheck },
   { name: 'Maintenance', href: '/maintenance', icon: Settings },
 ];
 

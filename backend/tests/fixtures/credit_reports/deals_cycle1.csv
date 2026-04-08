@@ -1,0 +1,9 @@
+_id,clientName,statusName,loanAmount,loanDate,accountBalance,lastPaymentDate,daysPastDue,frequency,numberOfPayments,paymentAmount,lastAmountPaid,document,documentType,birthdate,phoneNumber,dealAddressId
+d001,John Smith,Active,15000,2024-01-15,8500,2026-02-15,0,monthly,60,350,350,123456789,SSN,1985-06-15,5551234567,a001
+d002,Maria Garcia Rodriguez,Past Due,20000,2023-08-10,12000,2026-01-20,15,bi-weekly,104,200,200,987654321,SSN,1990-03-20,5559876543,a002
+d003,Bob Johnson,Paid in Full,10000,2022-05-01,0,2026-02-15,0,monthly,48,250,250,111223333,SSN,1975-11-30,5551112222,a003
+d004,Alice Brown,Cancelled,5000,2025-01-01,5000,,0,monthly,24,220,0,,,1992-04-10,5553334444,a004
+d005,Taqueria Los Amigos LLC,Active,25000,2024-03-20,18000,2026-02-10,0,monthly,60,480,480,,,,5554445555,a005
+d006,Charles Davis,In Legal,18000,2023-11-05,14000,2025-12-01,90,monthly,60,360,360,222334455,SSN,1980-07-22,5556667777,a006
+d007,Diana Evans,Repossessed,12000,2024-06-01,10000,2025-10-15,150,monthly,48,260,260,333445566,SSN,1988-09-14,5557778888,a007
+d009,Eva Foster,In Collections,8000,2024-09-15,7500,2026-01-20,45,weekly,208,50,50,444556677,SSN,1995-02-28,5558889999,a009
