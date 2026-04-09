@@ -349,7 +349,7 @@ export const creditReportAPI = {
     }),
 
   deleteDraft: (runId: string) =>
-    fetchAPI<void>(`/credit-reports/runs/${runId}`, { method: 'DELETE' }),
+    fetchAPI<{ message: string }>(`/credit-reports/runs/${runId}`, { method: 'DELETE' }),
 
   getRules: () =>
     fetchAPI<{

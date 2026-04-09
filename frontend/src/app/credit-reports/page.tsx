@@ -30,6 +30,9 @@ import {
   ChevronDown,
   ChevronRight,
   AlertTriangle,
+  Eye,
+  Minus,
+  Plus,
 } from 'lucide-react';
 
 // Required Metro 2 fields checked per-row so the UI can flag rows with blanks.
@@ -94,12 +97,31 @@ const METRO2_STATUS_CODES: { code: string; description: string }[] = [
   { code: 'DA', description: 'Delete entire account (admin use only)' },
 ];
 
+type ToastItem = {
+  id: number;
+  message: string;
+  type: 'success' | 'error' | 'info';
+};
+let _toastIdCounter = 0;
+
 export default function CreditReportsPage() {
   // ── Global state ─────────────────────────────────────────────────────
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [currentRun, setCurrentRun] = useState<RunDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const showToast = useCallback(
+    (message: string, type: ToastItem['type'] = 'info') => {
+      const id = ++_toastIdCounter;
+      setToasts(prev => [...prev, { id, message, type }]);
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, 4000);
+    },
+    []
+  );
 
   // Upload form state
   const [dealFile, setDealFile] = useState<File | null>(null);
@@ -113,7 +135,7 @@ export default function CreditReportsPage() {
   const [bucketTotal, setBucketTotal] = useState(0);
   const [bucketLoading, setBucketLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showInstructions, setShowInstructions] = useState(false);
+  // MongoDB export instructions modal removed per user request.
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10000); // "All" by default
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -440,14 +462,6 @@ export default function CreditReportsPage() {
           subtitle="Export deals + dealaddresses from MongoDB and upload both files here."
           defaultOpen={false}
         >
-          <div className="flex justify-end mb-3">
-            <button
-              onClick={() => setShowInstructions(true)}
-              className="text-sm text-blue-600 hover:text-blue-700 underline"
-            >
-              How do I export from MongoDB?
-            </button>
-          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <FileDropZone
@@ -464,20 +478,17 @@ export default function CreditReportsPage() {
             />
           </div>
 
-          <div className="flex items-end gap-4">
-            <div className="flex-1">
+          <div className="flex items-end gap-4 flex-wrap">
+            <div className="w-48">
               <label className="block text-sm font-medium text-foreground mb-1">
-                Cycle month (reporting period)
+                Cycle month
               </label>
               <input
                 type="month"
                 value={cycleMonth.slice(0, 7)}
                 onChange={e => setCycleMonth(e.target.value + '-01')}
-                className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 bg-card text-foreground"
+                className="w-full px-3 py-2 border border-input rounded-lg focus:ring-2 focus:ring-blue-500 bg-card text-foreground [color-scheme:dark]"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Defaults to last calendar month.
-              </p>
             </div>
             <button
               onClick={handleUpload}
@@ -594,13 +605,16 @@ export default function CreditReportsPage() {
             onDeleteDraft={async runId => {
               try {
                 await creditReportAPI.deleteDraft(runId);
-                // If we deleted the currently-selected run, clear it.
+                showToast('Draft deleted successfully', 'success');
                 if (currentRun?.run.id === runId) {
                   setCurrentRun(null);
                 }
                 await loadRuns();
               } catch (e) {
-                setError(e instanceof Error ? e.message : 'Failed to delete draft');
+                showToast(
+                  e instanceof Error ? e.message : 'Failed to delete draft',
+                  'error'
+                );
               }
             }}
             onSelectRun={async runId => {
@@ -622,8 +636,36 @@ export default function CreditReportsPage() {
         <RulesReferenceCard />
       </div>
 
-      {/* ── MongoDB export instructions modal ──────────────────────── */}
-      {showInstructions && <MongoInstructionsModal onClose={() => setShowInstructions(false)} />}
+      {/* ── Toast notifications ──────────────────────────────────────── */}
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
+          {toasts.map(t => (
+            <div
+              key={t.id}
+              className={`px-4 py-3 rounded-lg shadow-lg border text-sm font-medium animate-in slide-in-from-right-5 ${
+                t.type === 'success'
+                  ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-300'
+                  : t.type === 'error'
+                  ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300'
+                  : 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {t.type === 'success' && <CheckCircle2 className="w-4 h-4 flex-shrink-0" />}
+                {t.type === 'error' && <XCircle className="w-4 h-4 flex-shrink-0" />}
+                {t.type === 'info' && <Info className="w-4 h-4 flex-shrink-0" />}
+                <span>{t.message}</span>
+                <button
+                  onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}
+                  className="ml-auto opacity-60 hover:opacity-100"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </Layout>
   );
 }
@@ -679,11 +721,13 @@ function CollapsibleSection({
             <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
           )}
         </div>
-        {open ? (
-          <ChevronDown className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-        ) : (
-          <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-        )}
+        <div className="flex-shrink-0 p-1 rounded hover:bg-muted">
+          {open ? (
+            <Minus className="w-4 h-4 text-muted-foreground" />
+          ) : (
+            <Plus className="w-4 h-4 text-muted-foreground" />
+          )}
+        </div>
       </button>
       {open && <div className="px-6 pb-6">{children}</div>}
     </div>
@@ -1449,16 +1493,12 @@ function FinalizeCard({
     }
   };
 
+  const subtitle = isFinal
+    ? 'This run is finalized. Re-download any bucket CSV or the summary report below.'
+    : 'Lock the cycle and persist cross-cycle state (business flags, review decisions, continuity).';
+
   return (
-    <div className="bg-card p-6 rounded-lg shadow border border-border">
-      <h2 className="text-xl font-semibold text-foreground mb-1">
-        3. Finalize and download
-      </h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        {isFinal
-          ? 'This run is finalized. Re-download any bucket CSV or the summary report below.'
-          : 'Lock the cycle and persist cross-cycle state (business flags, review decisions, continuity).'}
-      </p>
+    <CollapsibleSection title="3. Finalize and download" subtitle={subtitle}>
 
       {isDraft && (
         <div className="space-y-3 mb-5">
@@ -1538,7 +1578,7 @@ function FinalizeCard({
           Summary report (.txt)
         </button>
       </div>
-    </div>
+    </CollapsibleSection>
   );
 }
 
@@ -1549,6 +1589,16 @@ function ValidationList({
   validations: Validation[];
   onShowAffectedRows: (dealIds: string[], label: string) => void;
 }) {
+  const fatalCount = validations.filter(v => v.severity === 'FATAL').length;
+  const warnCount = validations.filter(v => v.severity === 'WARNING').length;
+  const subtitle = [
+    fatalCount > 0 ? `${fatalCount} fatal` : '',
+    warnCount > 0 ? `${warnCount} warning${warnCount > 1 ? 's' : ''}` : '',
+    `${validations.length} total`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
   const iconFor = (sev: string) => {
     if (sev === 'FATAL') return <XCircle className="w-5 h-5 text-red-600" />;
     if (sev === 'WARNING') return <AlertCircle className="w-5 h-5 text-amber-600" />;
@@ -1560,8 +1610,7 @@ function ValidationList({
     return 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800';
   };
   return (
-    <div className="bg-card p-6 rounded-lg shadow border border-border">
-      <h2 className="text-xl font-semibold text-foreground mb-4">Validation findings</h2>
+    <CollapsibleSection title="Validation findings" subtitle={subtitle}>
       <div className="space-y-2">
         {validations.map((v, i) => {
           const dealIds = v.affected_deal_ids ?? [];
@@ -1592,7 +1641,7 @@ function ValidationList({
           );
         })}
       </div>
-    </div>
+    </CollapsibleSection>
   );
 }
 
@@ -1621,9 +1670,13 @@ function RunHistoryCard({
             to view it in the preview above.
           </p>
         </div>
-        <span className="text-sm text-blue-600 hover:text-blue-700">
-          {expanded ? 'Collapse' : 'Expand'}
-        </span>
+        <div className="p-1 rounded hover:bg-muted">
+          {expanded ? (
+            <Minus className="w-4 h-4 text-muted-foreground" />
+          ) : (
+            <Plus className="w-4 h-4 text-muted-foreground" />
+          )}
+        </div>
       </button>
       {expanded && (
         <div className="mt-4 overflow-x-auto border border-border rounded-lg">
@@ -1695,9 +1748,18 @@ function RunHistoryCard({
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => onSelectRun(run.id)}
-                          className="text-xs text-blue-600 hover:text-blue-700 underline"
+                          className={`p-1 rounded transition-colors ${
+                            isSelected
+                              ? 'text-green-600 bg-green-100 dark:bg-green-900/30'
+                              : 'text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/30'
+                          }`}
+                          title={isSelected ? 'Currently selected' : 'View this run'}
                         >
-                          {isSelected ? 'Selected' : 'View'}
+                          {isSelected ? (
+                            <Check className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
                         </button>
                         {run.status === 'draft' && (
                           <button
@@ -1763,9 +1825,13 @@ function RulesReferenceCard() {
             by the engine. Read-only in v1.
           </p>
         </div>
-        <span className="text-sm text-blue-600 hover:text-blue-700">
-          {expanded ? 'Collapse' : 'Expand'}
-        </span>
+        <div className="p-1 rounded hover:bg-muted">
+          {expanded ? (
+            <Minus className="w-4 h-4 text-muted-foreground" />
+          ) : (
+            <Plus className="w-4 h-4 text-muted-foreground" />
+          )}
+        </div>
       </button>
 
       {expanded && (

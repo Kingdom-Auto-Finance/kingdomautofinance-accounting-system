@@ -1064,21 +1064,35 @@ def list_run_items(
             "total": total,
         }
 
-    # ── Default path: Postgres-side pagination on deal_id order ─────
-    start = (page - 1) * page_size
-    end = start + page_size - 1
-    result = (
-        _build_query(count_mode="exact")
-        .order("deal_id")
-        .range(start, end)
-        .execute()
-    )
+    # ── Default path (no sort key): fetch all matching rows via the same
+    # paginated loop (Supabase caps a single .range() call at ~1000 rows,
+    # so for large page_size values we need to iterate). ────────────────
+    FETCH_CAP = 10_000
+    all_rows: List[Dict[str, Any]] = []
+    offset = 0
+    batch_size = 1000
+    while offset < FETCH_CAP:
+        query = _build_query()
+        batch = (
+            query.order("deal_id")
+            .range(offset, offset + batch_size - 1)
+            .execute()
+            .data
+            or []
+        )
+        all_rows.extend(batch)
+        if len(batch) < batch_size:
+            break
+        offset += batch_size
 
+    total = len(all_rows)
+    start = (page - 1) * page_size
+    end = start + page_size
     return {
-        "data": result.data or [],
+        "data": all_rows[start:end],
         "page": page,
         "page_size": page_size,
-        "total": result.count or 0,
+        "total": total,
     }
 
 
@@ -1650,11 +1664,22 @@ def delete_draft_run(run_id: str) -> None:
     """Delete a draft run and all its items, validations, and uploads.
 
     Only draft runs can be deleted. Finalized and archived runs are immutable
-    for audit purposes. CASCADE on the FK from run_items and validations
-    handles child row cleanup automatically.
+    for audit purposes. Child rows are deleted explicitly (not relying on
+    CASCADE through PostgREST, which can be blocked by RLS policies).
     """
     run = _assert_run_is_draft(run_id)
     supabase = get_supabase_client()
+
+    # Delete children first (order matters for FK constraints).
+    supabase.table("credit_report_validations").delete().eq(
+        "run_id", run_id
+    ).execute()
+    supabase.table("credit_report_run_items").delete().eq(
+        "run_id", run_id
+    ).execute()
+
+    # Delete the run itself.
+    supabase.table("credit_report_runs").delete().eq("id", run_id).execute()
 
     # Delete uploads associated with this run (lineage is disposable for drafts).
     for upload_col in ("deal_upload_id", "address_upload_id"):
@@ -1663,9 +1688,6 @@ def delete_draft_run(run_id: str) -> None:
             supabase.table("credit_report_uploads").delete().eq(
                 "id", upload_id
             ).execute()
-
-    # Delete the run itself (CASCADE handles run_items + validations).
-    supabase.table("credit_report_runs").delete().eq("id", run_id).execute()
 
 
 def render_report_txt(run_id: str) -> str:
