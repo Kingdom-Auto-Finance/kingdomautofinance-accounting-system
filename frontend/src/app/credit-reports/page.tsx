@@ -1593,6 +1593,16 @@ function ValidationList({
   validations: Validation[];
   onShowAffectedRows: (dealIds: string[], label: string) => void;
 }) {
+  const fatalCount = validations.filter(v => v.severity === 'FATAL').length;
+  const warnCount = validations.filter(v => v.severity === 'WARNING').length;
+  const subtitle = [
+    fatalCount > 0 ? `${fatalCount} fatal` : '',
+    warnCount > 0 ? `${warnCount} warning${warnCount > 1 ? 's' : ''}` : '',
+    `${validations.length} total`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
   const iconFor = (sev: string) => {
     if (sev === 'FATAL') return <XCircle className="w-5 h-5 text-red-600" />;
     if (sev === 'WARNING') return <AlertCircle className="w-5 h-5 text-amber-600" />;
@@ -1604,8 +1614,7 @@ function ValidationList({
     return 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800';
   };
   return (
-    <div className="bg-card p-6 rounded-lg shadow border border-border">
-      <h2 className="text-xl font-semibold text-foreground mb-4">Validation findings</h2>
+    <CollapsibleSection title="Validation findings" subtitle={subtitle}>
       <div className="space-y-2">
         {validations.map((v, i) => {
           const dealIds = v.affected_deal_ids ?? [];
@@ -1636,7 +1645,7 @@ function ValidationList({
           );
         })}
       </div>
-    </div>
+    </CollapsibleSection>
   );
 }
 
