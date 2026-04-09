@@ -34,7 +34,21 @@ BUCKET_READY = "ready"
 BUCKET_REVIEW = "review"
 BUCKET_EXCLUDED = "excluded"
 BUCKET_CARRIED = "carried"
-ALL_BUCKETS = (BUCKET_READY, BUCKET_REVIEW, BUCKET_EXCLUDED, BUCKET_CARRIED)
+BUCKET_SKIPPED = "skipped"
+ALL_BUCKETS = (
+    BUCKET_READY,
+    BUCKET_REVIEW,
+    BUCKET_EXCLUDED,
+    BUCKET_CARRIED,
+    BUCKET_SKIPPED,
+)
+
+# Buckets intended as audit-only output (not in Metro 2 submission file).
+# ``excluded`` and ``carried`` keep the audit CSV layout because operators
+# use them for record-keeping. ``review`` and ``skipped`` use the Metro 2
+# 43-column layout so the operator can visually verify the format matches
+# what will actually be reported once decisions are made.
+METRO2_CSV_BUCKETS = (BUCKET_READY, BUCKET_REVIEW, BUCKET_SKIPPED)
 
 
 # ─── UTILITIES ───────────────────────────────────────────────────────────────
@@ -266,6 +280,7 @@ def create_draft_run(
         forced_excluded_rows,
         forced_business_rows,
         forced_consumer_rows,
+        forced_review_rows,
         auto_applied_review_rows,
     ) = _apply_account_state_overrides(merged_df, state_map, as_of)
 
@@ -304,6 +319,21 @@ def create_draft_run(
                 "reason": fc.get("reason", ""),
             }])
             excluded_df = pd.concat([excluded_df, new_row], ignore_index=True)
+
+    # Merge forced-review rows (accounts that were skipped last cycle - they
+    # come back to the review queue regardless of current status).
+    for fr in forced_review_rows:
+        source_row = fr["source"]
+        new_row = pd.DataFrame([{
+            "deal_id": fr["deal_id"],
+            "clientName": str(source_row.get("clientName", "")),
+            "statusName": str(source_row.get("statusName", "")),
+            "loanAmount": source_row.get("loanAmount", ""),
+            "loanDate": source_row.get("loanDate", ""),
+            "daysPastDue": source_row.get("daysPastDue", ""),
+            "review_reason": fr.get("reason", ""),
+        }])
+        review_df = pd.concat([review_df, new_row], ignore_index=True)
 
     auto_applied_ready_rows: List[dict] = []
     auto_applied_excluded_rows: List[dict] = []
@@ -382,6 +412,7 @@ def create_draft_run(
         "review_count": len(review_df),
         "excluded_count": len(excluded_df),
         "carried_over_count": len(carried_rows),
+        "skipped_count": 0,  # initial runs have no skipped items; updated by mutations
         "deal_upload_id": deal_upload_id,
         "address_upload_id": address_upload_id,
         "created_by": user_id,
@@ -444,11 +475,11 @@ def _apply_account_state_overrides(
     merged_df: pd.DataFrame,
     state_map: Dict[str, Dict[str, Any]],
     as_of_date: str,
-) -> Tuple[pd.DataFrame, List[dict], List[dict], List[dict], List[dict]]:
+) -> Tuple[pd.DataFrame, List[dict], List[dict], List[dict], List[dict], List[dict]]:
     """Apply persistent state to the merged DataFrame prior to transform.
 
     Returns ``(filtered_df, forced_excluded_rows, forced_business_rows,
-    forced_consumer_rows, auto_applied_review_rows)``:
+    forced_consumer_rows, forced_review_rows, auto_applied_review_rows)``:
 
     - ``filtered_df``: the input with every override-handled row REMOVED so
       the engine's transform doesn't process them again.
@@ -458,6 +489,9 @@ def _apply_account_state_overrides(
       that would otherwise be caught by the engine's BUSINESS_PATTERN regex.
       These are re-classified by statusName and land in the appropriate
       bucket without the regex check.
+    - ``forced_review_rows``: deals with ``last_review_decision='skip'``.
+      These are force-routed into the review bucket regardless of current
+      statusName so the operator re-decides them each cycle after a skip.
     - ``auto_applied_review_rows``: dicts describing rows where a prior
       review decision was silently re-applied. Each dict contains the
       rebuilt metro2_row (for approve) or the exclusion info (for exclude).
@@ -465,10 +499,18 @@ def _apply_account_state_overrides(
     forced_excluded_rows: List[dict] = []
     forced_business_rows: List[dict] = []
     forced_consumer_rows: List[dict] = []
+    forced_review_rows: List[dict] = []
     auto_applied_review_rows: List[dict] = []
 
     if merged_df is None or len(merged_df) == 0:
-        return merged_df, forced_excluded_rows, forced_business_rows, forced_consumer_rows, auto_applied_review_rows
+        return (
+            merged_df,
+            forced_excluded_rows,
+            forced_business_rows,
+            forced_consumer_rows,
+            forced_review_rows,
+            auto_applied_review_rows,
+        )
 
     drop_indices: List[int] = []
     for idx, row in merged_df.iterrows():
@@ -536,8 +578,29 @@ def _apply_account_state_overrides(
             drop_indices.append(idx)
             continue
 
-        # ── Auto-apply prior review decision ───────────────────────────
+        # ── Prior-skip force-review ────────────────────────────────────
+        # If the operator skipped this account in a previous finalized run,
+        # force it back into the review queue this cycle regardless of its
+        # current status. This runs BEFORE the auto-apply gate so skipped
+        # accounts always come back for fresh review.
         prior_decision = state.get("last_review_decision")
+        if prior_decision == "skip":
+            prior_cycle = state.get("last_reported_cycle") or state.get(
+                "last_review_set_at"
+            )
+            forced_review_rows.append({
+                "deal_id": deal_id,
+                "source": row,
+                "reason": (
+                    f"Previously skipped in cycle {prior_cycle} - please re-review"
+                    if prior_cycle
+                    else "Previously skipped - please re-review"
+                ),
+            })
+            drop_indices.append(idx)
+            continue
+
+        # ── Auto-apply prior review decision ───────────────────────────
         prior_status_name = state.get("last_review_status_name")
         current_status_name = str(row.get("statusName", ""))
 
@@ -582,7 +645,14 @@ def _apply_account_state_overrides(
     else:
         filtered = merged_df
 
-    return filtered, forced_excluded_rows, forced_business_rows, forced_consumer_rows, auto_applied_review_rows
+    return (
+        filtered,
+        forced_excluded_rows,
+        forced_business_rows,
+        forced_consumer_rows,
+        forced_review_rows,
+        auto_applied_review_rows,
+    )
 
 
 def _build_carried_rows(
@@ -800,7 +870,11 @@ def _business_flag_source(source: Dict[str, Any], state: Dict[str, Any]) -> Opti
 def _bulk_insert_validations(
     run_id: str, findings: List[engine.ValidationFinding]
 ) -> None:
-    """Persist validation findings for a run."""
+    """Persist validation findings for a run.
+
+    ``affected_deal_ids`` is stored as JSONB (null for aggregate findings,
+    list of strings for per-row findings).
+    """
     if not findings:
         return
     supabase = get_supabase_client()
@@ -811,6 +885,7 @@ def _bulk_insert_validations(
             "code": f.code,
             "message": f.message,
             "affected_count": f.affected_count,
+            "affected_deal_ids": f.affected_deal_ids,
         }
         for f in findings
     ]
@@ -854,42 +929,150 @@ def list_runs(limit: int = 20) -> List[Dict[str, Any]]:
     return result.data or []
 
 
+# Whitelist of sort keys accepted by list_run_items. Each maps to a callable
+# that extracts a sortable value from a run_item row. Numeric keys return
+# floats so the sort is numeric; string keys return lowercase strings so the
+# sort is case-insensitive.
+def _sort_key_extractor(key: str):
+    """Return a function that extracts the sort value from a run_item dict."""
+    def get_src(item: Dict[str, Any]) -> Dict[str, Any]:
+        return item.get("source_row") or {}
+
+    def get_m2(item: Dict[str, Any]) -> Dict[str, Any]:
+        return item.get("metro2_row") or {}
+
+    def _to_float(v: Any) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float("-inf")
+
+    def _to_str(v: Any) -> str:
+        return str(v or "").strip().lower()
+
+    extractors = {
+        "deal_id": lambda item: _to_str(item.get("deal_id")),
+        "client_name": lambda item: _to_str(get_src(item).get("clientName")),
+        "status_name": lambda item: _to_str(get_src(item).get("statusName")),
+        "loan_amount": lambda item: _to_float(
+            get_m2(item).get("HighestCreditOrOrigLoanAmt")
+            or get_src(item).get("loanAmount")
+        ),
+        "current_balance": lambda item: _to_float(
+            get_m2(item).get("CurrentBalance")
+            or get_src(item).get("accountBalance")
+        ),
+        "date_opened": lambda item: _to_str(
+            get_m2(item).get("DateOpened") or get_src(item).get("loanDate")
+        ),
+        "days_past_due": lambda item: _to_float(get_src(item).get("daysPastDue")),
+        "reason": lambda item: _to_str(item.get("reason")),
+        "business_flag_source": lambda item: _to_str(item.get("business_flag_source")),
+    }
+    return extractors.get(key)
+
+
 def list_run_items(
     run_id: str,
     bucket: Optional[str] = None,
     q: Optional[str] = None,
     page: int = 1,
     page_size: int = 100,
+    order_by: Optional[str] = None,
+    order_dir: str = "asc",
+    deal_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Return paginated run_items filtered by bucket and optional substring.
+    """Return paginated run_items filtered by bucket, search, and deal_ids.
 
-    ``q`` searches across ``deal_id`` and the JSONB ``source_row->>clientName``.
+    - ``q`` searches across ``deal_id`` and the JSONB ``source_row->>clientName``.
+    - ``order_by`` is a whitelisted sort key (see ``_sort_key_extractor``).
+      When specified, the function fetches all rows for the filter (up to a
+      10k cap), sorts them in Python, and returns the requested page. For
+      Kingdom's 400-500 row scale this is instant.
+    - ``deal_ids`` filters to exactly those deal_ids (used for drilldown
+      from validation findings).
     """
     page = max(1, page)
     page_size = max(1, min(MAX_PAGE_SIZE, page_size))
+    order_dir = (order_dir or "asc").lower()
+    if order_dir not in ("asc", "desc"):
+        raise ValueError("order_dir must be 'asc' or 'desc'")
 
     supabase = get_supabase_client()
-    query = (
-        supabase.table("credit_report_run_items")
-        .select("*", count="exact")
-        .eq("run_id", run_id)
-    )
-    if bucket:
-        if bucket not in ALL_BUCKETS:
-            raise ValueError(f"Invalid bucket '{bucket}'")
-        query = query.eq("bucket", bucket)
 
-    # Search: deal_id prefix OR clientName ilike. Supabase's or_ needs the
-    # JSONB path expressed as source_row->>clientName.
-    if q:
-        like = f"%{q}%"
-        query = query.or_(
-            f"deal_id.ilike.{like},source_row->>clientName.ilike.{like}"
+    def _build_query(count_mode: Optional[str] = None):
+        q_query = supabase.table("credit_report_run_items")
+        if count_mode:
+            q_query = q_query.select("*", count=count_mode)
+        else:
+            q_query = q_query.select("*")
+        q_query = q_query.eq("run_id", run_id)
+        if bucket:
+            if bucket not in ALL_BUCKETS:
+                raise ValueError(f"Invalid bucket '{bucket}'")
+            q_query = q_query.eq("bucket", bucket)
+        if q:
+            like = f"%{q}%"
+            q_query = q_query.or_(
+                f"deal_id.ilike.{like},source_row->>clientName.ilike.{like}"
+            )
+        if deal_ids:
+            q_query = q_query.in_("deal_id", deal_ids)
+        return q_query
+
+    # ── Server-side sort path ────────────────────────────────────────
+    if order_by:
+        extractor = _sort_key_extractor(order_by)
+        if extractor is None:
+            raise ValueError(
+                f"Unknown order_by '{order_by}'. Allowed: "
+                "deal_id, client_name, status_name, loan_amount, "
+                "current_balance, date_opened, days_past_due, reason, "
+                "business_flag_source"
+            )
+
+        # Fetch all matching rows (defensive 10k cap) then sort in Python.
+        SORT_FETCH_CAP = 10_000
+        all_rows: List[Dict[str, Any]] = []
+        offset = 0
+        batch_size = 1000
+        while offset < SORT_FETCH_CAP:
+            query = _build_query()
+            batch = (
+                query.order("deal_id")
+                .range(offset, offset + batch_size - 1)
+                .execute()
+                .data
+                or []
+            )
+            all_rows.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+
+        all_rows.sort(
+            key=extractor,
+            reverse=(order_dir == "desc"),
         )
+        total = len(all_rows)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return {
+            "data": all_rows[start:end],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        }
 
+    # ── Default path: Postgres-side pagination on deal_id order ─────
     start = (page - 1) * page_size
     end = start + page_size - 1
-    result = query.order("deal_id").range(start, end).execute()
+    result = (
+        _build_query(count_mode="exact")
+        .order("deal_id")
+        .range(start, end)
+        .execute()
+    )
 
     return {
         "data": result.data or [],
@@ -903,14 +1086,28 @@ def list_run_items(
 def render_csv(run_id: str, bucket: str) -> str:
     """Rebuild a CSV for a run+bucket on demand from credit_report_run_items.
 
-    For the 'ready' bucket, emits the 42 Metro 2 columns in canonical order.
-    For 'review' / 'excluded' / 'carried', emits an audit-friendly layout with
-    deal_id, clientName, statusName, reason, and any decision metadata.
+    Layouts per bucket:
+      - ``ready``, ``review``, ``skipped``: 43 Metro 2 columns in canonical
+        order. For review/skipped, rows where the operator has not yet
+        approved have ``AccountStatus`` and ``FCRA_DOFI`` left blank so the
+        operator can see exactly what's missing before uploading.
+      - ``excluded``, ``carried``: audit-friendly layout with deal_id,
+        clientName, statusName, reason, and decision metadata.
     """
     if bucket not in ALL_BUCKETS:
         raise ValueError(f"Invalid bucket '{bucket}'")
 
     supabase = get_supabase_client()
+
+    # Fetch the run's as_of_date for rebuilding Metro 2 rows from source.
+    as_of_date = (
+        supabase.table("credit_report_runs")
+        .select("as_of_date_str")
+        .eq("id", run_id)
+        .execute()
+        .data[0]["as_of_date_str"]
+    )
+
     # Paginate through items so we don't exceed the 1000-row default limit.
     rows: List[Dict[str, Any]] = []
     offset = 0
@@ -931,14 +1128,32 @@ def render_csv(run_id: str, bucket: str) -> str:
             break
         offset += page_size
 
-    if bucket == BUCKET_READY:
-        records = [r.get("metro2_row") or {} for r in rows]
+    if bucket in METRO2_CSV_BUCKETS:
+        records: List[Dict[str, Any]] = []
+        for r in rows:
+            m2 = r.get("metro2_row")
+            if m2:
+                # Already computed (ready bucket, or approved review row).
+                records.append(m2)
+                continue
+            # Review or skipped rows without a computed metro2_row: rebuild
+            # from source_row so the CSV matches the Metro 2 format exactly.
+            source = r.get("source_row") or {}
+            if not source:
+                continue
+            built = engine.build_metro2_row(source, as_of_date)
+            # For pending review decisions (defer/skip/none), leave the
+            # operator-supplied fields blank so they can see what's missing.
+            built["AccountStatus"] = ""
+            built["FCRA_DOFI"] = ""
+            records.append(built)
         df = pd.DataFrame(records, columns=list(engine.METRO2_COLUMNS))
     else:
-        records = []
+        # Excluded and carried: audit layout.
+        audit_records: List[Dict[str, Any]] = []
         for r in rows:
             source = r.get("source_row") or {}
-            records.append({
+            audit_records.append({
                 "deal_id": r.get("deal_id"),
                 "clientName": source.get("clientName", ""),
                 "statusName": source.get("statusName", ""),
@@ -951,7 +1166,7 @@ def render_csv(run_id: str, bucket: str) -> str:
                 "review_fcra_dofi": r.get("review_fcra_dofi") or "",
                 "missing_from_upload": r.get("missing_from_upload", False),
             })
-        df = pd.DataFrame(records)
+        df = pd.DataFrame(audit_records)
 
     return df.to_csv(index=False)
 
@@ -985,6 +1200,7 @@ def _recompute_run_counts(run_id: str) -> Dict[str, int]:
             "review_count": counts[BUCKET_REVIEW],
             "excluded_count": counts[BUCKET_EXCLUDED],
             "carried_over_count": counts[BUCKET_CARRIED],
+            "skipped_count": counts[BUCKET_SKIPPED],
         }
     ).eq("id", run_id).execute()
 
@@ -1119,19 +1335,24 @@ def set_review_decision(
     note: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Record an operator's decision on a review-queue item.
+    """Record an operator's decision on a run item.
 
     Decisions:
       - ``approve``: rebuild the metro2_row using the operator's Metro 2
         status code + FCRA DOFI, move bucket to ``ready``.
       - ``exclude``: move to ``excluded`` with a human note.
-      - ``defer``: leave in ``review`` but record the decision so the UI can
-        show "decision deferred" and the operator doesn't need to re-visit.
+      - ``defer``: leave in ``review`` but record the decision.
+      - ``skip``: move to ``skipped`` bucket. Not reported this cycle, and
+        on next cycle the account is force-routed back into the review
+        queue via ``_apply_account_state_overrides`` regardless of its
+        current MongoDB status.
 
-    As with business flags, ``credit_report_account_state`` is NOT upserted
-    here - that happens only on finalize.
+    Callable on any bucket (Ready rows use ``skip`` to remove from this
+    month's file without permanent exclusion). As with business flags,
+    ``credit_report_account_state`` is NOT upserted here - that happens
+    only on finalize.
     """
-    if decision not in ("approve", "exclude", "defer"):
+    if decision not in ("approve", "exclude", "defer", "skip"):
         raise ValueError(f"Invalid decision '{decision}'")
 
     _assert_run_is_draft(run_id)
@@ -1170,6 +1391,15 @@ def set_review_decision(
         updates["bucket"] = BUCKET_EXCLUDED
         updates["metro2_row"] = None
         reason_text = f"Manual exclude: {note}" if note else "Manually excluded from reporting"
+        updates["reason"] = reason_text
+    elif decision == "skip":
+        updates["bucket"] = BUCKET_SKIPPED
+        updates["metro2_row"] = None
+        reason_text = (
+            f"Skipped this cycle: {note}"
+            if note
+            else "Skipped this cycle - will come back for review next cycle"
+        )
         updates["reason"] = reason_text
     else:  # defer
         updates["bucket"] = BUCKET_REVIEW
@@ -1332,7 +1562,7 @@ def _upsert_account_state_from_run(
     # Collect state updates for every distinct deal_id across all buckets
     # (ready, review, excluded). Carried rows do NOT mutate state - they're
     # just a snapshot of the prior cycle.
-    all_buckets = [BUCKET_READY, BUCKET_REVIEW, BUCKET_EXCLUDED]
+    all_buckets = [BUCKET_READY, BUCKET_REVIEW, BUCKET_EXCLUDED, BUCKET_SKIPPED]
     all_items: List[Dict[str, Any]] = []
     for bucket in all_buckets:
         all_items.extend(_load_all_items(run_id, bucket))

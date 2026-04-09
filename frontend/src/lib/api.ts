@@ -199,6 +199,7 @@ export interface RunSummary {
   review_count: number;
   excluded_count: number;
   carried_over_count: number;
+  skipped_count?: number;
   created_at?: string;
   finalized_at?: string;
   note?: string;
@@ -210,6 +211,7 @@ export interface Validation {
   code: string;
   message: string;
   affected_count?: number;
+  affected_deal_ids?: string[] | null;
 }
 
 export interface RunDetail {
@@ -221,11 +223,11 @@ export interface RunItem {
   id: string;
   run_id: string;
   deal_id: string;
-  bucket: 'ready' | 'review' | 'excluded' | 'carried';
+  bucket: 'ready' | 'review' | 'excluded' | 'carried' | 'skipped';
   reason?: string;
   source_row: Record<string, any>;
   metro2_row?: Record<string, any>;
-  review_decision?: 'approve' | 'exclude' | 'defer';
+  review_decision?: 'approve' | 'exclude' | 'defer' | 'skip';
   review_metro2_status_code?: string;
   review_fcra_dofi?: string;
   review_note?: string;
@@ -282,20 +284,35 @@ export const creditReportAPI = {
 
   listItems: (
     runId: string,
-    params: { bucket?: string; q?: string; page?: number; page_size?: number } = {}
+    params: {
+      bucket?: string;
+      q?: string;
+      page?: number;
+      page_size?: number;
+      order_by?: string;
+      order_dir?: 'asc' | 'desc';
+      deal_ids?: string[];
+    } = {}
   ) => {
     const qs = new URLSearchParams();
     if (params.bucket) qs.set('bucket', params.bucket);
     if (params.q) qs.set('q', params.q);
     if (params.page) qs.set('page', String(params.page));
     if (params.page_size) qs.set('page_size', String(params.page_size));
+    if (params.order_by) qs.set('order_by', params.order_by);
+    if (params.order_dir) qs.set('order_dir', params.order_dir);
+    if (params.deal_ids && params.deal_ids.length) {
+      qs.set('deal_ids', params.deal_ids.join(','));
+    }
     return fetchAPI<ListItemsResponse>(
       `/credit-reports/runs/${runId}/items?${qs.toString()}`
     );
   },
 
-  downloadCsv: (runId: string, bucket: 'ready' | 'review' | 'excluded' | 'carried') =>
-    fetchAPI<string>(`/credit-reports/runs/${runId}/download/${bucket}`),
+  downloadCsv: (
+    runId: string,
+    bucket: 'ready' | 'review' | 'excluded' | 'carried' | 'skipped'
+  ) => fetchAPI<string>(`/credit-reports/runs/${runId}/download/${bucket}`),
 
   downloadReport: (runId: string) =>
     fetchAPI<string>(`/credit-reports/runs/${runId}/download-report`),
@@ -314,7 +331,7 @@ export const creditReportAPI = {
     runId: string,
     dealId: string,
     body: {
-      decision: 'approve' | 'exclude' | 'defer';
+      decision: 'approve' | 'exclude' | 'defer' | 'skip';
       metro2_status_code?: string;
       fcra_dofi?: string;
       note?: string;

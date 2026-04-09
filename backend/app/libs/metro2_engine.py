@@ -72,8 +72,13 @@ CODE_MIN_ACCOUNTS = "MIN_ACCOUNTS"
 
 ValidationFinding = namedtuple(
     "ValidationFinding",
-    ["severity", "code", "message", "affected_count"],
+    ["severity", "code", "message", "affected_count", "affected_deal_ids"],
+    defaults=[None],  # affected_deal_ids defaults to None
 )
+# Maximum number of deal_ids to capture per finding. Bounds the JSONB payload
+# size; if more rows fail, the extras are dropped and the message notes the
+# truncation.
+MAX_AFFECTED_DEAL_IDS = 200
 
 # ─── CANONICAL METRO 2 COLUMN ORDER ──────────────────────────────────────────
 # The 42 fields emitted by build_metro2_row(), in the order they must appear
@@ -729,8 +734,25 @@ def validate(
     a list of ``ValidationFinding`` records. When ``enforce_minimum`` is False
     (used during draft runs), the 100-account floor becomes a WARNING instead
     of a FATAL so operators can still preview small batches.
+
+    Per-row checks (BLANK_REQUIRED, MISSING_ADDRESS, BAD_DATE,
+    DUP_ACCOUNT_NUMBER) capture the specific deal_ids that triggered the
+    finding via ``ConsumerAccountNumber``, capped at MAX_AFFECTED_DEAL_IDS
+    to bound the payload size. Aggregate findings (SSN_ZEROS, MIN_ACCOUNTS,
+    MISSING_COLUMN) leave ``affected_deal_ids`` as None.
     """
     findings: List[ValidationFinding] = []
+
+    def _capture_ids(mask: "pd.Series") -> List[str]:
+        """Extract up to MAX_AFFECTED_DEAL_IDS deal_ids from a boolean mask."""
+        if "ConsumerAccountNumber" not in df.columns:
+            return []
+        return (
+            df.loc[mask, "ConsumerAccountNumber"]
+            .astype(str)
+            .head(MAX_AFFECTED_DEAL_IDS)
+            .tolist()
+        )
 
     for col in REQUIRED_COLUMNS:
         if col not in df.columns:
@@ -740,29 +762,38 @@ def validate(
                     code=CODE_MISSING_COLUMN,
                     message=f"Required column '{col}' missing entirely",
                     affected_count=None,
+                    affected_deal_ids=None,
                 )
             )
             continue
-        blank = df[df[col].isna() | (df[col].astype(str).str.strip() == "")].shape[0]
+        blank_mask = df[col].isna() | (df[col].astype(str).str.strip() == "")
+        blank = int(blank_mask.sum())
         if blank > 0:
+            deal_ids = _capture_ids(blank_mask)
+            truncated = " (showing first 200)" if blank > MAX_AFFECTED_DEAL_IDS else ""
             findings.append(
                 ValidationFinding(
                     severity="FATAL",
                     code=CODE_BLANK_REQUIRED,
-                    message=f"{blank} rows have blank '{col}' (required)",
+                    message=f"{blank} rows have blank '{col}' (required){truncated}",
                     affected_count=blank,
+                    affected_deal_ids=deal_ids or None,
                 )
             )
 
     if "Address1" in df.columns:
-        addr_missing = df[df["Address1"].astype(str).str.strip() == ""].shape[0]
+        addr_mask = df["Address1"].astype(str).str.strip() == ""
+        addr_missing = int(addr_mask.sum())
         if addr_missing > 0:
+            deal_ids = _capture_ids(addr_mask)
+            truncated = " (showing first 200)" if addr_missing > MAX_AFFECTED_DEAL_IDS else ""
             findings.append(
                 ValidationFinding(
                     severity="FATAL",
                     code=CODE_MISSING_ADDRESS,
-                    message=f"{addr_missing} rows missing Address1 - run with address CSV",
+                    message=f"{addr_missing} rows missing Address1 - run with address CSV{truncated}",
                     affected_count=addr_missing,
+                    affected_deal_ids=deal_ids or None,
                 )
             )
 
@@ -775,30 +806,40 @@ def validate(
                 code=CODE_SSN_ZEROS,
                 message=f"{all_zero} of {len(df)} accounts ({pct}%) have SSN=000000000 (no SSN on file)",
                 affected_count=int(all_zero),
+                affected_deal_ids=None,
             )
         )
 
     if "DateOpened" in df.columns:
-        bad_dates = df[~df["DateOpened"].astype(str).str.match(r"^\d{8}$")].shape[0]
+        bad_mask = ~df["DateOpened"].astype(str).str.match(r"^\d{8}$")
+        bad_dates = int(bad_mask.sum())
         if bad_dates > 0:
+            deal_ids = _capture_ids(bad_mask)
+            truncated = " (showing first 200)" if bad_dates > MAX_AFFECTED_DEAL_IDS else ""
             findings.append(
                 ValidationFinding(
                     severity="WARNING",
                     code=CODE_BAD_DATE,
-                    message=f"{bad_dates} rows have invalid DateOpened format (expected YYYYMMDD)",
+                    message=f"{bad_dates} rows have invalid DateOpened format (expected YYYYMMDD){truncated}",
                     affected_count=bad_dates,
+                    affected_deal_ids=deal_ids or None,
                 )
             )
 
     if "ConsumerAccountNumber" in df.columns:
+        # Mark ALL duplicates (keep=False) so every row participating in a
+        # duplicate group appears in the affected list.
+        dup_mask = df.duplicated("ConsumerAccountNumber", keep=False)
         dupes = int(df.duplicated("ConsumerAccountNumber").sum())
         if dupes > 0:
+            deal_ids = _capture_ids(dup_mask)
             findings.append(
                 ValidationFinding(
                     severity="FATAL",
                     code=CODE_DUP_ACCOUNT_NUMBER,
                     message=f"{dupes} duplicate ConsumerAccountNumber values",
                     affected_count=dupes,
+                    affected_deal_ids=deal_ids or None,
                 )
             )
 
@@ -812,6 +853,7 @@ def validate(
                     f"Only {len(df)} reportable accounts - Experian requires minimum {min_accounts}"
                 ),
                 affected_count=len(df),
+                affected_deal_ids=None,
             )
         )
 

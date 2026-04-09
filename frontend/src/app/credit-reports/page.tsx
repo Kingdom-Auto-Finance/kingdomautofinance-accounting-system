@@ -28,13 +28,14 @@ import {
   Lock,
 } from 'lucide-react';
 
-type BucketKey = 'ready' | 'review' | 'excluded' | 'carried';
+type BucketKey = 'ready' | 'review' | 'excluded' | 'carried' | 'skipped';
 
 const BUCKET_LABELS: Record<BucketKey, string> = {
   ready: 'Ready',
   review: 'Needs Review',
   excluded: 'Excluded',
   carried: 'Carried over',
+  skipped: 'Skipped this cycle',
 };
 
 const BUCKET_COLORS: Record<BucketKey, string> = {
@@ -42,7 +43,35 @@ const BUCKET_COLORS: Record<BucketKey, string> = {
   review: 'text-amber-700 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-300',
   excluded: 'text-gray-700 bg-gray-100 dark:bg-gray-800 dark:text-gray-300',
   carried: 'text-blue-700 bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300',
+  skipped: 'text-purple-700 bg-purple-100 dark:bg-purple-900/30 dark:text-purple-300',
 };
+
+// Curated Metro 2 status codes for the review decision form's hybrid combobox.
+// Operators can type freely, or pick from this list; the description shown
+// below the input updates live as they type or select.
+// Full Metro 2 code reference: https://www.consumerfinance.gov/rules-policy/guidance/
+const METRO2_STATUS_CODES: { code: string; description: string }[] = [
+  { code: '05', description: 'Account transferred to another lender' },
+  { code: '11', description: 'Current account, paid as agreed' },
+  { code: '13', description: 'Paid or closed account, zero balance' },
+  { code: '61', description: 'Paid in full; was a voluntary surrender' },
+  { code: '62', description: 'Paid in full; was a collection account' },
+  { code: '63', description: 'Paid in full; was a repossession' },
+  { code: '64', description: 'Paid in full; was a charge-off' },
+  { code: '65', description: 'Paid in full; was a bankruptcy' },
+  { code: '71', description: 'Account 30 days past due' },
+  { code: '78', description: 'Account 60 days past due' },
+  { code: '80', description: 'Account 90 days past due' },
+  { code: '82', description: 'Account 120 days past due' },
+  { code: '83', description: 'Account 150 days past due' },
+  { code: '84', description: 'Account 180 days past due' },
+  { code: '93', description: 'Account assigned to internal or external collections' },
+  { code: '94', description: 'Claim filed with government guarantor' },
+  { code: '95', description: 'Voluntary surrender' },
+  { code: '96', description: 'Merchandise was repossessed' },
+  { code: '97', description: 'Unpaid balance reported as a loss (charge-off)' },
+  { code: 'DA', description: 'Delete entire account (admin use only)' },
+];
 
 export default function CreditReportsPage() {
   // ── Global state ─────────────────────────────────────────────────────
@@ -68,6 +97,9 @@ export default function CreditReportsPage() {
   const [pageSize, setPageSize] = useState(100);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  // Filter by deal_ids from a validation finding drilldown
+  const [affectedDealIds, setAffectedDealIds] = useState<string[] | null>(null);
+  const [affectedFindingLabel, setAffectedFindingLabel] = useState<string | null>(null);
 
   // ── Initial load ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -89,13 +121,30 @@ export default function CreditReportsPage() {
     }
   };
 
-  // ── Reload items whenever active bucket, run, page, or page size changes ──
+  // ── Reload items whenever active bucket, run, page, size, sort, or filter changes ──
   useEffect(() => {
     if (currentRun) {
-      loadItems(currentRun.run.id, activeBucket, searchQuery, page, pageSize);
+      loadItems(
+        currentRun.run.id,
+        activeBucket,
+        searchQuery,
+        page,
+        pageSize,
+        sortKey,
+        sortDir,
+        affectedDealIds
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentRun?.run.id, activeBucket, page, pageSize]);
+  }, [
+    currentRun?.run.id,
+    activeBucket,
+    page,
+    pageSize,
+    sortKey,
+    sortDir,
+    affectedDealIds,
+  ]);
 
   // Reset to page 1 whenever the bucket switches so we don't land past the end.
   useEffect(() => {
@@ -109,7 +158,10 @@ export default function CreditReportsPage() {
       bucket: BucketKey,
       query: string,
       pageArg: number,
-      pageSizeArg: number
+      pageSizeArg: number,
+      sortKeyArg: string | null,
+      sortDirArg: 'asc' | 'desc',
+      dealIdsFilter: string[] | null
     ) => {
       setBucketLoading(true);
       try {
@@ -118,6 +170,9 @@ export default function CreditReportsPage() {
           q: query || undefined,
           page: pageArg,
           page_size: pageSizeArg,
+          order_by: sortKeyArg || undefined,
+          order_dir: sortDirArg,
+          deal_ids: dealIdsFilter || undefined,
         });
         setBucketItems(resp.data);
         setBucketTotal(resp.total);
@@ -159,11 +214,22 @@ export default function CreditReportsPage() {
     setSearchQuery(val);
     setPage(1);
     if (currentRun) {
-      loadItems(currentRun.run.id, activeBucket, val, 1, pageSize);
+      loadItems(
+        currentRun.run.id,
+        activeBucket,
+        val,
+        1,
+        pageSize,
+        sortKey,
+        sortDir,
+        affectedDealIds
+      );
     }
   };
 
   // ── Sort handler (toggles direction on repeated clicks) ──────────────
+  // Sort is applied server-side across the full dataset; the useEffect on
+  // sortKey/sortDir automatically re-fetches the page when either changes.
   const handleSortClick = (key: string) => {
     if (sortKey === key) {
       setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -171,27 +237,29 @@ export default function CreditReportsPage() {
       setSortKey(key);
       setSortDir('asc');
     }
+    // Reset to page 1 so the first sorted results land on top.
+    setPage(1);
   };
 
-  // Client-side sort of the currently-loaded page.
-  const sortedItems = useMemo(() => {
-    if (!sortKey) return bucketItems;
-    const copy = [...bucketItems];
-    copy.sort((a, b) => {
-      const av = extractSortValue(a, sortKey);
-      const bv = extractSortValue(b, sortKey);
-      if (av === bv) return 0;
-      if (av === null || av === undefined || av === '') return 1;
-      if (bv === null || bv === undefined || bv === '') return -1;
-      if (typeof av === 'number' && typeof bv === 'number') {
-        return sortDir === 'asc' ? av - bv : bv - av;
-      }
-      const sa = String(av).toLowerCase();
-      const sb = String(bv).toLowerCase();
-      return sortDir === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa);
-    });
-    return copy;
-  }, [bucketItems, sortKey, sortDir]);
+  // ── Affected-rows drilldown from validation findings ────────────────
+  const handleShowAffectedRows = (dealIds: string[], label: string) => {
+    setAffectedDealIds(dealIds);
+    setAffectedFindingLabel(label);
+    setActiveBucket('ready');
+    setPage(1);
+    setSortKey(null);
+    setTimeout(() => {
+      document
+        .getElementById('preview-section')
+        ?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
+  };
+
+  const handleClearAffectedFilter = () => {
+    setAffectedDealIds(null);
+    setAffectedFindingLabel(null);
+    setPage(1);
+  };
 
   // ── Decision handlers ────────────────────────────────────────────────
   const refreshAfterMutation = async () => {
@@ -199,7 +267,16 @@ export default function CreditReportsPage() {
     // Reload the run detail (so counts refresh) and the current bucket list.
     const detail = await creditReportAPI.getRun(currentRun.run.id);
     setCurrentRun(detail);
-    loadItems(detail.run.id, activeBucket, searchQuery, page, pageSize);
+    loadItems(
+      detail.run.id,
+      activeBucket,
+      searchQuery,
+      page,
+      pageSize,
+      sortKey,
+      sortDir,
+      affectedDealIds
+    );
   };
 
   const handleSetBusinessFlag = async (dealId: string, isBusiness: boolean) => {
@@ -216,7 +293,7 @@ export default function CreditReportsPage() {
 
   const handleSetReviewDecision = async (
     dealId: string,
-    decision: 'approve' | 'exclude' | 'defer',
+    decision: 'approve' | 'exclude' | 'defer' | 'skip',
     metro2_status_code?: string,
     fcra_dofi?: string,
     note?: string
@@ -256,7 +333,16 @@ export default function CreditReportsPage() {
       });
       setCurrentRun(detail);
       await loadRuns();
-      loadItems(detail.run.id, activeBucket, searchQuery, page, pageSize);
+      loadItems(
+        detail.run.id,
+        activeBucket,
+        searchQuery,
+        page,
+        pageSize,
+        sortKey,
+        sortDir,
+        affectedDealIds
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Finalize failed');
     }
@@ -285,6 +371,7 @@ export default function CreditReportsPage() {
       review: r?.review_count ?? 0,
       excluded: r?.excluded_count ?? 0,
       carried: r?.carried_over_count ?? 0,
+      skipped: r?.skipped_count ?? 0,
     };
   }, [currentRun]);
 
@@ -424,10 +511,27 @@ export default function CreditReportsPage() {
               ))}
             </div>
 
+            {/* Affected-rows filter chip (shown when drilling down from a validation finding) */}
+            {affectedDealIds && (
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                <Info className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                <span className="text-sm text-blue-800 dark:text-blue-300 flex-1">
+                  Filtered by validation finding: <strong>{affectedFindingLabel}</strong>{' '}
+                  ({affectedDealIds.length} rows)
+                </span>
+                <button
+                  onClick={handleClearAffectedFilter}
+                  className="text-xs text-blue-600 hover:text-blue-800 underline"
+                >
+                  Clear filter
+                </button>
+              </div>
+            )}
+
             {/* Items table */}
             <BucketTable
               bucket={activeBucket}
-              items={sortedItems}
+              items={bucketItems}
               total={bucketTotal}
               loading={bucketLoading}
               isDraft={currentRun.run.status === 'draft'}
@@ -449,7 +553,10 @@ export default function CreditReportsPage() {
 
         {/* ── Validation panel ───────────────────────────────────── */}
         {currentRun && currentRun.validations.length > 0 && (
-          <ValidationList validations={currentRun.validations} />
+          <ValidationList
+            validations={currentRun.validations}
+            onShowAffectedRows={handleShowAffectedRows}
+          />
         )}
 
         {/* ── Finalize + Download card ───────────────────────────── */}
@@ -508,35 +615,6 @@ function formatWholeDollar(value: any): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return `$${value}`;
   return `$${n.toLocaleString('en-US')}`;
-}
-
-/** Extract the value the sort handler should compare for a given key. */
-function extractSortValue(item: RunItem, key: string): any {
-  const src = item.source_row || {};
-  const m2 = item.metro2_row || {};
-  switch (key) {
-    case 'deal_id':
-      return item.deal_id;
-    case 'client_name':
-      return String(src.clientName ?? '');
-    case 'status_name':
-      return String(src.statusName ?? '');
-    case 'loan_amount':
-      return Number(m2.HighestCreditOrOrigLoanAmt ?? src.loanAmount ?? 0);
-    case 'current_balance':
-      return Number(m2.CurrentBalance ?? src.accountBalance ?? 0);
-    case 'date_opened':
-      // YYYYMMDD strings sort chronologically with a plain string compare.
-      return String(m2.DateOpened ?? src.loanDate ?? '');
-    case 'days_past_due':
-      return Number(src.daysPastDue ?? 0);
-    case 'reason':
-      return String(item.reason ?? '');
-    case 'business_flag_source':
-      return String(item.business_flag_source ?? '');
-    default:
-      return '';
-  }
 }
 
 // ─── Subcomponents (inlined for Step 5; extracted later) ────────────────────
@@ -735,6 +813,13 @@ const COLUMN_DEFS: Record<BucketKey, ColumnDef[]> = {
     { label: 'Status', sortKey: 'status_name' },
     { label: 'Last reported', sortKey: null },
   ],
+  skipped: [
+    { label: 'Deal ID', sortKey: 'deal_id' },
+    { label: 'Client name', sortKey: 'client_name' },
+    { label: 'Status', sortKey: 'status_name' },
+    { label: 'Reason', sortKey: 'reason' },
+    { label: 'Actions', sortKey: null },
+  ],
 };
 
 function BucketTable({
@@ -768,7 +853,7 @@ function BucketTable({
   onSetBusinessFlag: (dealId: string, isBusiness: boolean) => void;
   onSetReviewDecision: (
     dealId: string,
-    decision: 'approve' | 'exclude' | 'defer',
+    decision: 'approve' | 'exclude' | 'defer' | 'skip',
     metro2_status_code?: string,
     fcra_dofi?: string,
     note?: string
@@ -892,7 +977,7 @@ function BucketRow({
   onSetBusinessFlag: (dealId: string, isBusiness: boolean) => void;
   onSetReviewDecision: (
     dealId: string,
-    decision: 'approve' | 'exclude' | 'defer',
+    decision: 'approve' | 'exclude' | 'defer' | 'skip',
     metro2_status_code?: string,
     fcra_dofi?: string,
     note?: string
@@ -929,19 +1014,51 @@ function BucketRow({
         </td>
         <td className="px-4 py-3 text-sm">
           {isDraft && (
-            <button
-              onClick={() => {
-                if (confirm(`Flag ${clientName} (${dealId}) as a business account?`)) {
-                  onSetBusinessFlag(dealId, true);
-                }
-              }}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/70 rounded border border-border"
-              title="Move to excluded as a business entity"
-            >
-              <Building2 className="w-3 h-3" />
-              Flag business
-            </button>
+            <div className="flex flex-wrap gap-1">
+              <button
+                onClick={() => {
+                  if (confirm(`Flag ${clientName} (${dealId}) as a business account?`)) {
+                    onSetBusinessFlag(dealId, true);
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/70 rounded border border-border"
+                title="Move to excluded as a business entity"
+              >
+                <Building2 className="w-3 h-3" />
+                Flag business
+              </button>
+              <button
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Skip ${clientName} (${dealId}) this cycle? It will come back for review next cycle.`
+                    )
+                  ) {
+                    onSetReviewDecision(dealId, 'skip');
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 hover:bg-purple-200 rounded border border-purple-300 dark:border-purple-700"
+                title="Remove from this cycle; will be reviewed next cycle"
+              >
+                <Clock className="w-3 h-3" />
+                Skip
+              </button>
+            </div>
           )}
+        </td>
+      </tr>
+    );
+  }
+
+  if (bucket === 'skipped') {
+    return (
+      <tr className="hover:bg-muted/30 transition-colors">
+        <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{clientName}</td>
+        <td className="px-4 py-3 text-sm text-foreground">{statusName}</td>
+        <td className="px-4 py-3 text-sm text-muted-foreground">{item.reason ?? ''}</td>
+        <td className="px-4 py-3 text-sm text-muted-foreground italic">
+          Will re-appear in Needs Review next cycle
         </td>
       </tr>
     );
@@ -1046,18 +1163,28 @@ function ReviewDecisionForm({
 }: {
   item: RunItem;
   onSubmit: (
-    decision: 'approve' | 'exclude' | 'defer',
+    decision: 'approve' | 'exclude' | 'defer' | 'skip',
     metro2_status_code?: string,
     fcra_dofi?: string,
     note?: string
   ) => void;
   onCancel: () => void;
 }) {
-  const [decision, setDecision] = useState<'approve' | 'exclude' | 'defer'>('approve');
+  const [decision, setDecision] = useState<'approve' | 'exclude' | 'defer' | 'skip'>(
+    'approve'
+  );
   const [code, setCode] = useState(item.review_metro2_status_code ?? '');
   const [dofi, setDofi] = useState(item.review_fcra_dofi ?? '');
   const [note, setNote] = useState(item.review_note ?? '');
   const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  // Look up the description for the currently-entered code (live).
+  const codeDescription = useMemo(() => {
+    const trimmed = code.trim().toUpperCase();
+    if (!trimmed) return null;
+    const match = METRO2_STATUS_CODES.find(c => c.code.toUpperCase() === trimmed);
+    return match?.description ?? 'Custom code (not in the curated list)';
+  }, [code]);
 
   const handleSave = () => {
     setErrMsg(null);
@@ -1071,13 +1198,18 @@ function ReviewDecisionForm({
         return;
       }
     }
-    onSubmit(decision, code.trim() || undefined, dofi.trim() || undefined, note.trim() || undefined);
+    onSubmit(
+      decision,
+      code.trim() || undefined,
+      dofi.trim() || undefined,
+      note.trim() || undefined
+    );
   };
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
-        {(['approve', 'exclude', 'defer'] as const).map(d => (
+      <div className="flex flex-wrap gap-2">
+        {(['approve', 'exclude', 'defer', 'skip'] as const).map(d => (
           <button
             key={d}
             onClick={() => setDecision(d)}
@@ -1086,10 +1218,16 @@ function ReviewDecisionForm({
                 ? 'bg-blue-600 text-white border-blue-600'
                 : 'bg-card text-foreground border-border hover:bg-muted/50'
             }`}
+            title={
+              d === 'skip'
+                ? 'Skip this cycle - will come back for review next cycle'
+                : undefined
+            }
           >
             {d === 'approve' && <Check className="w-3 h-3" />}
             {d === 'exclude' && <Ban className="w-3 h-3" />}
             {d === 'defer' && <Clock className="w-3 h-3" />}
+            {d === 'skip' && <Clock className="w-3 h-3" />}
             {d.charAt(0).toUpperCase() + d.slice(1)}
           </button>
         ))}
@@ -1104,11 +1242,25 @@ function ReviewDecisionForm({
             </label>
             <input
               type="text"
+              list="metro2-status-codes"
               value={code}
               onChange={e => setCode(e.target.value)}
-              placeholder="e.g. 64, 94, 95, 97"
+              placeholder="Type or pick - e.g. 95"
               className="w-full px-3 py-1.5 text-sm border border-input rounded bg-card text-foreground"
+              autoComplete="off"
             />
+            <datalist id="metro2-status-codes">
+              {METRO2_STATUS_CODES.map(c => (
+                <option key={c.code} value={c.code}>
+                  {c.description}
+                </option>
+              ))}
+            </datalist>
+            {codeDescription && (
+              <p className="text-xs text-muted-foreground mt-1 italic">
+                {codeDescription}
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-foreground mb-1">
@@ -1123,6 +1275,14 @@ function ReviewDecisionForm({
               className="w-full px-3 py-1.5 text-sm border border-input rounded bg-card text-foreground"
             />
           </div>
+        </div>
+      )}
+
+      {decision === 'skip' && (
+        <div className="text-xs text-muted-foreground bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded p-2">
+          This account will be removed from the current cycle's Metro 2 file and
+          automatically placed in the Needs Review queue on the next cycle,
+          regardless of its MongoDB status at that time.
         </div>
       )}
 
@@ -1291,7 +1451,13 @@ function FinalizeCard({
   );
 }
 
-function ValidationList({ validations }: { validations: Validation[] }) {
+function ValidationList({
+  validations,
+  onShowAffectedRows,
+}: {
+  validations: Validation[];
+  onShowAffectedRows: (dealIds: string[], label: string) => void;
+}) {
   const iconFor = (sev: string) => {
     if (sev === 'FATAL') return <XCircle className="w-5 h-5 text-red-600" />;
     if (sev === 'WARNING') return <AlertCircle className="w-5 h-5 text-amber-600" />;
@@ -1306,20 +1472,34 @@ function ValidationList({ validations }: { validations: Validation[] }) {
     <div className="bg-card p-6 rounded-lg shadow border border-border">
       <h2 className="text-xl font-semibold text-foreground mb-4">Validation findings</h2>
       <div className="space-y-2">
-        {validations.map((v, i) => (
-          <div
-            key={i}
-            className={`border rounded-lg p-3 flex items-start gap-3 ${colorFor(v.severity)}`}
-          >
-            {iconFor(v.severity)}
-            <div className="flex-1 text-sm">
-              <div className="font-medium text-foreground">
-                [{v.severity}] {v.code}
+        {validations.map((v, i) => {
+          const dealIds = v.affected_deal_ids ?? [];
+          const hasDrilldown = dealIds.length > 0;
+          return (
+            <div
+              key={i}
+              className={`border rounded-lg p-3 flex items-start gap-3 ${colorFor(v.severity)}`}
+            >
+              {iconFor(v.severity)}
+              <div className="flex-1 text-sm">
+                <div className="font-medium text-foreground">
+                  [{v.severity}] {v.code}
+                </div>
+                <div className="text-muted-foreground mt-0.5">{v.message}</div>
+                {hasDrilldown && (
+                  <button
+                    onClick={() =>
+                      onShowAffectedRows(dealIds, `${v.code} (${v.message})`)
+                    }
+                    className="mt-2 text-xs px-2 py-1 rounded border border-border bg-card hover:bg-muted/50 transition-colors font-medium"
+                  >
+                    Show {dealIds.length} affected row{dealIds.length === 1 ? '' : 's'}
+                  </button>
+                )}
               </div>
-              <div className="text-muted-foreground mt-0.5">{v.message}</div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

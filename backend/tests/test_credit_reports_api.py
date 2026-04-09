@@ -121,6 +121,45 @@ class TestGetRunAndItems:
         )
         assert resp.json()["total"] == 2
 
+    def test_server_side_sort(self, client):
+        draft_resp = client.post(
+            "/api/v1/credit-reports/runs/draft",
+            files={
+                "deal_csv": _open_fixture("deals_cycle1.csv"),
+                "address_csv": _open_fixture("addresses_cycle1.csv"),
+            },
+            data={"cycle_month": "2026-03-31"},
+        )
+        run_id = draft_resp.json()["run_id"]
+        resp = client.get(
+            f"/api/v1/credit-reports/runs/{run_id}/items",
+            params={"bucket": "ready", "order_by": "loan_amount", "order_dir": "desc"},
+        )
+        assert resp.status_code == 200
+        amounts = [
+            float(item["metro2_row"]["HighestCreditOrOrigLoanAmt"])
+            for item in resp.json()["data"]
+        ]
+        assert amounts == sorted(amounts, reverse=True)
+
+    def test_deal_ids_filter(self, client):
+        draft_resp = client.post(
+            "/api/v1/credit-reports/runs/draft",
+            files={
+                "deal_csv": _open_fixture("deals_cycle1.csv"),
+                "address_csv": _open_fixture("addresses_cycle1.csv"),
+            },
+            data={"cycle_month": "2026-03-31"},
+        )
+        run_id = draft_resp.json()["run_id"]
+        resp = client.get(
+            f"/api/v1/credit-reports/runs/{run_id}/items",
+            params={"deal_ids": "d001,d003"},
+        )
+        assert resp.status_code == 200
+        returned_ids = {item["deal_id"] for item in resp.json()["data"]}
+        assert returned_ids == {"d001", "d003"}
+
     def test_invalid_bucket_returns_400(self, client):
         draft_resp = client.post(
             "/api/v1/credit-reports/runs/draft",

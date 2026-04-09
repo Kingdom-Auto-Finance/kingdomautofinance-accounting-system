@@ -460,6 +460,67 @@ class TestValidate:
             assert isinstance(f.code, str)
             assert isinstance(f.message, str)
 
+    def test_captures_affected_deal_ids_on_blank_required(self):
+        """Rows with blank required fields should have their ConsumerAccountNumber
+        captured in the finding's affected_deal_ids list so the UI can drill down."""
+        good = self._good_row()
+        good["ConsumerAccountNumber"] = "deal_a"
+
+        bad1 = self._good_row()
+        bad1["ConsumerAccountNumber"] = "deal_b"
+        bad1["Address1"] = ""
+
+        bad2 = self._good_row()
+        bad2["ConsumerAccountNumber"] = "deal_c"
+        bad2["Address1"] = ""
+
+        df = pd.DataFrame([good, bad1, bad2])
+        findings = m.validate(df, enforce_minimum=False)
+
+        # Should have a MISSING_ADDRESS finding with deal_b and deal_c captured
+        missing_addr = next(
+            f for f in findings if f.code == m.CODE_MISSING_ADDRESS
+        )
+        assert missing_addr.severity == "FATAL"
+        assert missing_addr.affected_count == 2
+        assert sorted(missing_addr.affected_deal_ids) == ["deal_b", "deal_c"]
+
+    def test_captures_affected_deal_ids_on_duplicates(self):
+        row1 = self._good_row()
+        row1["ConsumerAccountNumber"] = "dup1"
+        row2 = self._good_row()
+        row2["ConsumerAccountNumber"] = "dup1"  # duplicate
+        row3 = self._good_row()
+        row3["ConsumerAccountNumber"] = "unique"
+
+        df = pd.DataFrame([row1, row2, row3])
+        findings = m.validate(df, enforce_minimum=False)
+        dup = next(f for f in findings if f.code == m.CODE_DUP_ACCOUNT_NUMBER)
+        # Both duplicated rows should be captured (keep=False)
+        assert set(dup.affected_deal_ids) == {"dup1"}
+
+    def test_aggregate_findings_have_none_deal_ids(self):
+        """MIN_ACCOUNTS and SSN_ZEROS don't target specific rows."""
+        df = pd.DataFrame([self._good_row()])
+        findings = m.validate(df, enforce_minimum=True)
+        min_finding = next(f for f in findings if f.code == m.CODE_MIN_ACCOUNTS)
+        assert min_finding.affected_deal_ids is None
+
+    def test_affected_deal_ids_capped_at_200(self):
+        """More than 200 bad rows: list is truncated, message notes it."""
+        rows = []
+        for i in range(300):
+            r = self._good_row()
+            r["ConsumerAccountNumber"] = f"deal_{i}"
+            r["Address1"] = ""  # all blank
+            rows.append(r)
+        df = pd.DataFrame(rows)
+        findings = m.validate(df, enforce_minimum=False)
+        missing = next(f for f in findings if f.code == m.CODE_MISSING_ADDRESS)
+        assert missing.affected_count == 300
+        assert len(missing.affected_deal_ids) == 200
+        assert "showing first 200" in missing.message
+
 
 # ─── build_metro2_row ────────────────────────────────────────────────────────
 class TestBuildMetro2Row:

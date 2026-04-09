@@ -29,6 +29,7 @@ class RunSummary(BaseModel):
     review_count: int
     excluded_count: int
     carried_over_count: int
+    skipped_count: int = 0
     created_at: Optional[str] = None
     finalized_at: Optional[str] = None
 
@@ -154,19 +155,43 @@ async def get_run(run_id: str):
 @router.get("/runs/{run_id}/items", response_model=ListItemsResponse)
 async def list_run_items(
     run_id: str,
-    bucket: Optional[str] = Query(None, description="ready | review | excluded | carried"),
+    bucket: Optional[str] = Query(
+        None, description="ready | review | excluded | carried | skipped"
+    ),
     q: Optional[str] = Query(None, description="Substring search across deal_id and clientName"),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=500),
+    order_by: Optional[str] = Query(
+        None,
+        description=(
+            "Sort key. Allowed: deal_id, client_name, status_name, loan_amount, "
+            "current_balance, date_opened, days_past_due, reason, business_flag_source. "
+            "When set, the service performs a full-dataset sort before pagination."
+        ),
+    ),
+    order_dir: str = Query("asc", description="asc or desc"),
+    deal_ids: Optional[str] = Query(
+        None,
+        description=(
+            "Comma-separated list of deal_ids. When set, only those rows are "
+            "returned (used for drilldown from validation findings)."
+        ),
+    ),
 ):
-    """Return paginated run_items, optionally filtered by bucket and search query."""
+    """Return paginated run_items, optionally filtered by bucket, search, deal_ids, and sorted."""
     try:
+        deal_id_list: Optional[List[str]] = None
+        if deal_ids:
+            deal_id_list = [d.strip() for d in deal_ids.split(",") if d.strip()]
         return svc.list_run_items(
             run_id=run_id,
             bucket=bucket,
             q=q,
             page=page,
             page_size=page_size,
+            order_by=order_by,
+            order_dir=order_dir,
+            deal_ids=deal_id_list,
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -186,7 +211,14 @@ class BusinessFlagRequest(BaseModel):
 
 
 class ReviewDecisionRequest(BaseModel):
-    decision: str = Field(..., description="approve | exclude | defer")
+    decision: str = Field(
+        ...,
+        description=(
+            "approve | exclude | defer | skip. 'skip' moves the row into the "
+            "skipped bucket; on the next cycle the account is force-routed "
+            "back into the review queue regardless of its MongoDB status."
+        ),
+    )
     metro2_status_code: Optional[str] = Field(
         None, description="Required when decision is 'approve'"
     )
