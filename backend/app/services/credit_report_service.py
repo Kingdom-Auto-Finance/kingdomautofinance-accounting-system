@@ -1650,11 +1650,22 @@ def delete_draft_run(run_id: str) -> None:
     """Delete a draft run and all its items, validations, and uploads.
 
     Only draft runs can be deleted. Finalized and archived runs are immutable
-    for audit purposes. CASCADE on the FK from run_items and validations
-    handles child row cleanup automatically.
+    for audit purposes. Child rows are deleted explicitly (not relying on
+    CASCADE through PostgREST, which can be blocked by RLS policies).
     """
     run = _assert_run_is_draft(run_id)
     supabase = get_supabase_client()
+
+    # Delete children first (order matters for FK constraints).
+    supabase.table("credit_report_validations").delete().eq(
+        "run_id", run_id
+    ).execute()
+    supabase.table("credit_report_run_items").delete().eq(
+        "run_id", run_id
+    ).execute()
+
+    # Delete the run itself.
+    supabase.table("credit_report_runs").delete().eq("id", run_id).execute()
 
     # Delete uploads associated with this run (lineage is disposable for drafts).
     for upload_col in ("deal_upload_id", "address_upload_id"):
@@ -1663,9 +1674,6 @@ def delete_draft_run(run_id: str) -> None:
             supabase.table("credit_report_uploads").delete().eq(
                 "id", upload_id
             ).execute()
-
-    # Delete the run itself (CASCADE handles run_items + validations).
-    supabase.table("credit_report_runs").delete().eq("id", run_id).execute()
 
 
 def render_report_txt(run_id: str) -> str:

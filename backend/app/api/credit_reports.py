@@ -313,7 +313,7 @@ async def download_bucket_csv(run_id: str, bucket: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/runs/{run_id}", status_code=204)
+@router.delete("/runs/{run_id}")
 async def delete_draft_run(run_id: str):
     """Delete a draft run and its associated data.
 
@@ -321,6 +321,7 @@ async def delete_draft_run(run_id: str):
     """
     try:
         svc.delete_draft_run(run_id)
+        return {"message": "Draft deleted successfully", "run_id": run_id}
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
