@@ -138,7 +138,15 @@ def _persist_upload(
     row_count: int,
     user_id: Optional[str],
 ) -> str:
-    """Insert a credit_report_uploads row and return its UUID."""
+    """Insert a credit_report_uploads row and return its UUID.
+
+    Stores only metadata (filename, size, sha256, row_count) — NOT the raw
+    CSV content. The original design stored the full base64-encoded CSV for
+    forensic lineage, but Supabase's PostgREST has a payload size limit
+    (~6 MB) that real-world Kingdom exports can exceed when base64-encoded.
+    The SHA256 hash still provides lineage (you can verify a re-export
+    matches by comparing hashes).
+    """
     supabase = get_supabase_client()
     payload = {
         "kind": kind,
@@ -146,7 +154,7 @@ def _persist_upload(
         "byte_size": len(content),
         "sha256": _sha256(content),
         "row_count": row_count,
-        "content_b64": base64.b64encode(content).decode("ascii"),
+        "content_b64": "",  # intentionally empty — see docstring above
         "uploaded_by": user_id,
     }
     result = supabase.table("credit_report_uploads").insert(payload).execute()
