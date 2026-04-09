@@ -348,6 +348,9 @@ export const creditReportAPI = {
       body,
     }),
 
+  deleteDraft: (runId: string) =>
+    fetchAPI<void>(`/credit-reports/runs/${runId}`, { method: 'DELETE' }),
+
   getRules: () =>
     fetchAPI<{
       experian_config: Record<string, string>;

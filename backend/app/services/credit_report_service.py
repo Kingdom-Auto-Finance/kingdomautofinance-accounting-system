@@ -25,9 +25,9 @@ from app.libs import metro2_engine as engine
 
 logger = logging.getLogger(__name__)
 
-# Upper bound on preview pagination. Keeps accidental page_size=10000 requests
-# from blowing up the API.
-MAX_PAGE_SIZE = 500
+# Upper bound on preview pagination. The "All" option in the UI sends
+# page_size=10000 so the operator can see every row without paging.
+MAX_PAGE_SIZE = 10000
 
 # Buckets enum - mirrors the CHECK constraint on credit_report_run_items.
 BUCKET_READY = "ready"
@@ -1644,6 +1644,28 @@ def _upsert_account_state_from_run(
             "deal_id", deal_id
         ).execute()
         supabase.table("credit_report_account_state").insert(clean).execute()
+
+
+def delete_draft_run(run_id: str) -> None:
+    """Delete a draft run and all its items, validations, and uploads.
+
+    Only draft runs can be deleted. Finalized and archived runs are immutable
+    for audit purposes. CASCADE on the FK from run_items and validations
+    handles child row cleanup automatically.
+    """
+    run = _assert_run_is_draft(run_id)
+    supabase = get_supabase_client()
+
+    # Delete uploads associated with this run (lineage is disposable for drafts).
+    for upload_col in ("deal_upload_id", "address_upload_id"):
+        upload_id = run.get(upload_col)
+        if upload_id:
+            supabase.table("credit_report_uploads").delete().eq(
+                "id", upload_id
+            ).execute()
+
+    # Delete the run itself (CASCADE handles run_items + validations).
+    supabase.table("credit_report_runs").delete().eq("id", run_id).execute()
 
 
 def render_report_txt(run_id: str) -> str:
