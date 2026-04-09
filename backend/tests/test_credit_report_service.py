@@ -278,7 +278,9 @@ class TestRenderCsv:
         from app.libs.metro2_engine import METRO2_COLUMNS
         assert header == list(METRO2_COLUMNS)
 
-    def test_review_csv_has_audit_columns(self, supabase_shim, cycle1_bytes):
+    def test_review_csv_uses_metro2_format(self, supabase_shim, cycle1_bytes):
+        """Review CSV must use the exact same 43-column Metro 2 layout as
+        the ready CSV so operators can visually verify the format."""
         result = svc.create_draft_run(
             deal_csv_bytes=cycle1_bytes["deal"],
             deal_filename="deals_cycle1.csv",
@@ -287,10 +289,22 @@ class TestRenderCsv:
             cycle_month=date(2026, 3, 31),
         )
         csv_text = svc.render_csv(result.run_id, "review")
-        header = csv_text.split("\n")[0]
-        assert "deal_id" in header
-        assert "clientName" in header
-        assert "reason" in header
+        lines = csv_text.strip().split("\n")
+        header = lines[0].split(",")
+        from app.libs.metro2_engine import METRO2_COLUMNS
+
+        # Must be the exact Metro 2 column set, in order.
+        assert header == list(METRO2_COLUMNS)
+
+        # Review rows that haven't been decided yet should have blank
+        # AccountStatus and FCRA_DOFI so the operator can see what's missing.
+        # Parse the data rows.
+        if len(lines) > 1:
+            account_status_idx = header.index("AccountStatus")
+            fcra_dofi_idx = header.index("FCRA_DOFI")
+            first_data = lines[1].split(",")
+            assert first_data[account_status_idx] == ""
+            assert first_data[fcra_dofi_idx] == ""
 
     def test_invalid_bucket_raises(self, supabase_shim, cycle1_bytes):
         result = svc.create_draft_run(
@@ -431,6 +445,129 @@ class TestSetReviewDecision:
                 deal_id="d006",
                 decision="bogus",
             )
+
+    def test_skip_moves_to_skipped_bucket(self, supabase_shim, cycle1_bytes):
+        """Skip decision should move the row to the 'skipped' bucket and
+        clear metro2_row."""
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # d001 is a Ready account; operator can skip it
+        updated = svc.set_review_decision(
+            run_id=result.run_id,
+            deal_id="d001",
+            decision="skip",
+            note="Borrower is disputing; hold off this month",
+        )
+        assert updated["bucket"] == "skipped"
+        assert updated["review_decision"] == "skip"
+        assert updated["metro2_row"] is None
+        assert "Skipped this cycle" in updated["reason"]
+        assert "disputing" in updated["reason"]
+
+        # Ready count should drop by 1, skipped count goes to 1
+        run = svc.get_run(result.run_id)
+        assert run["run"]["ready_count"] == 3
+
+    def test_skip_works_on_review_row(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # d006 is In Legal → review bucket
+        updated = svc.set_review_decision(
+            run_id=result.run_id,
+            deal_id="d006",
+            decision="skip",
+        )
+        assert updated["bucket"] == "skipped"
+        assert updated["review_decision"] == "skip"
+
+
+class TestListRunItems:
+    def _mk_run(self, shim, cycle1_bytes):
+        return svc.create_draft_run(
+            deal_csv_bytes=cycle1_bytes["deal"],
+            deal_filename="deals_cycle1.csv",
+            address_csv_bytes=cycle1_bytes["address"],
+            address_filename="addresses_cycle1.csv",
+            cycle_month=date(2026, 3, 31),
+        )
+
+    def test_server_side_sort_by_loan_amount_asc(
+        self, supabase_shim, cycle1_bytes
+    ):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        resp = svc.list_run_items(
+            result.run_id,
+            bucket="ready",
+            order_by="loan_amount",
+            order_dir="asc",
+        )
+        amounts = [
+            float(item["metro2_row"]["HighestCreditOrOrigLoanAmt"])
+            for item in resp["data"]
+        ]
+        assert amounts == sorted(amounts)
+
+    def test_server_side_sort_by_loan_amount_desc(
+        self, supabase_shim, cycle1_bytes
+    ):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        resp = svc.list_run_items(
+            result.run_id,
+            bucket="ready",
+            order_by="loan_amount",
+            order_dir="desc",
+        )
+        amounts = [
+            float(item["metro2_row"]["HighestCreditOrOrigLoanAmt"])
+            for item in resp["data"]
+        ]
+        assert amounts == sorted(amounts, reverse=True)
+
+    def test_sort_spans_full_dataset_across_pages(
+        self, supabase_shim, cycle1_bytes
+    ):
+        """Sort must be applied to the full result set, not just the current page."""
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        # Get all 4 ready items with a small page size
+        page1 = svc.list_run_items(
+            result.run_id,
+            bucket="ready",
+            order_by="loan_amount",
+            order_dir="desc",
+            page=1,
+            page_size=2,
+        )
+        page2 = svc.list_run_items(
+            result.run_id,
+            bucket="ready",
+            order_by="loan_amount",
+            order_dir="desc",
+            page=2,
+            page_size=2,
+        )
+        # Highest loan amounts must land on page 1
+        page1_amounts = [
+            float(i["metro2_row"]["HighestCreditOrOrigLoanAmt"]) for i in page1["data"]
+        ]
+        page2_amounts = [
+            float(i["metro2_row"]["HighestCreditOrOrigLoanAmt"]) for i in page2["data"]
+        ]
+        assert min(page1_amounts) >= max(page2_amounts)
+
+    def test_invalid_order_by_raises(self, supabase_shim, cycle1_bytes):
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        with pytest.raises(ValueError, match="Unknown order_by"):
+            svc.list_run_items(
+                result.run_id, bucket="ready", order_by="bogus_key"
+            )
+
+    def test_deal_ids_filter(self, supabase_shim, cycle1_bytes):
+        """deal_ids filter should restrict results to exactly those deal_ids."""
+        result = self._mk_run(supabase_shim, cycle1_bytes)
+        resp = svc.list_run_items(
+            result.run_id, deal_ids=["d001", "d003"]
+        )
+        returned_ids = {item["deal_id"] for item in resp["data"]}
+        assert returned_ids == {"d001", "d003"}
+        assert resp["total"] == 2
 
 
 class TestFinalizeRun:
@@ -723,6 +860,43 @@ class TestContinuityAndAutoApply:
         )
         assert d005_item["bucket"] == "ready"
         assert d005_item["business_flag_source"] == "manual_off"
+
+    def test_skipped_routes_to_review_next_cycle(
+        self, supabase_shim, cycle1_bytes, cycle2_bytes
+    ):
+        """If an Active-status account is skipped in cycle 1, on cycle 2 it
+        should land in the review bucket regardless of its still-Active
+        status. Skip is an operator-forced re-review decision."""
+        # Cycle 1: skip d001 (John Smith, Active)
+        r1 = self._finalize_cycle1(supabase_shim, cycle1_bytes)
+        svc.set_review_decision(
+            run_id=r1.run_id,
+            deal_id="d001",
+            decision="skip",
+            note="Under dispute",
+        )
+        svc.finalize_run(run_id=r1.run_id, force=True)
+
+        # Cycle 2: d001 is still Active in the new upload, but the prior
+        # skip decision should force it back into the review queue.
+        r2 = svc.create_draft_run(
+            deal_csv_bytes=cycle2_bytes["deal"],
+            deal_filename="deals_cycle2.csv",
+            address_csv_bytes=cycle2_bytes["address"],
+            address_filename="addresses_cycle2.csv",
+            cycle_month=date(2026, 4, 30),
+        )
+
+        d001_item = (
+            supabase_shim.table("credit_report_run_items")
+            .select("*")
+            .eq("run_id", r2.run_id)
+            .eq("deal_id", "d001")
+            .execute()
+            .data[0]
+        )
+        assert d001_item["bucket"] == "review"
+        assert "Previously skipped" in (d001_item.get("reason") or "")
 
     def test_business_override_on_persists_across_cycles(
         self, supabase_shim, cycle1_bytes, cycle2_bytes
