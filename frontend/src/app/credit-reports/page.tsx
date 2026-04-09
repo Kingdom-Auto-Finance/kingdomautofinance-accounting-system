@@ -1493,16 +1493,12 @@ function FinalizeCard({
     }
   };
 
+  const subtitle = isFinal
+    ? 'This run is finalized. Re-download any bucket CSV or the summary report below.'
+    : 'Lock the cycle and persist cross-cycle state (business flags, review decisions, continuity).';
+
   return (
-    <div className="bg-card p-6 rounded-lg shadow border border-border">
-      <h2 className="text-xl font-semibold text-foreground mb-1">
-        3. Finalize and download
-      </h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        {isFinal
-          ? 'This run is finalized. Re-download any bucket CSV or the summary report below.'
-          : 'Lock the cycle and persist cross-cycle state (business flags, review decisions, continuity).'}
-      </p>
+    <CollapsibleSection title="3. Finalize and download" subtitle={subtitle}>
 
       {isDraft && (
         <div className="space-y-3 mb-5">
@@ -1582,7 +1578,7 @@ function FinalizeCard({
           Summary report (.txt)
         </button>
       </div>
-    </div>
+    </CollapsibleSection>
   );
 }
 
