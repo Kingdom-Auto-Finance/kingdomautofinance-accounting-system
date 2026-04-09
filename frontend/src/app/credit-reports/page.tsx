@@ -26,7 +26,28 @@ import {
   Ban,
   Clock,
   Lock,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
 } from 'lucide-react';
+
+// Required Metro 2 fields checked per-row so the UI can flag rows with blanks.
+const REQUIRED_METRO2_FIELDS = [
+  'ConsumerAccountNumber',
+  'DateOpened',
+  'HighestCreditOrOrigLoanAmt',
+  'AccountStatus',
+  'CurrentBalance',
+  'DateOfAccountInfo',
+  'Surname',
+  'FirstName',
+  'SSN',
+  'Address1',
+  'City',
+  'State',
+  'PostalCode',
+];
 
 type BucketKey = 'ready' | 'review' | 'excluded' | 'carried' | 'skipped';
 
@@ -94,7 +115,7 @@ export default function CreditReportsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showInstructions, setShowInstructions] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(100);
+  const [pageSize, setPageSize] = useState(10000); // "All" by default
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   // Filter by deal_ids from a validation finding drilldown
@@ -414,14 +435,12 @@ export default function CreditReportsPage() {
         <StatusBanner runs={runs} currentRun={currentRun} />
 
         {/* ── Upload card ────────────────────────────────────────── */}
-        <div className="bg-card p-6 rounded-lg shadow border border-border">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">1. Upload CSVs</h2>
-              <p className="text-sm text-muted-foreground mt-1">
-                Export deals + dealaddresses from MongoDB and upload both files here.
-              </p>
-            </div>
+        <CollapsibleSection
+          title="1. Upload CSVs"
+          subtitle="Export deals + dealaddresses from MongoDB and upload both files here."
+          defaultOpen={false}
+        >
+          <div className="flex justify-end mb-3">
             <button
               onClick={() => setShowInstructions(true)}
               className="text-sm text-blue-600 hover:text-blue-700 underline"
@@ -469,21 +488,17 @@ export default function CreditReportsPage() {
               {uploading ? 'Processing...' : 'Process upload'}
             </button>
           </div>
-        </div>
+        </CollapsibleSection>
 
         {/* ── Preview section ────────────────────────────────────── */}
         {currentRun && (
-          <div id="preview-section" className="bg-card p-6 rounded-lg shadow border border-border">
+          <div id="preview-section">
+          <CollapsibleSection
+            title="2. Review accounts"
+            subtitle={`Cycle ${currentRun.run.cycle_month} - Status: ${currentRun.run.status}`}
+          >
             <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-xl font-semibold text-foreground">
-                  2. Review accounts
-                </h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Cycle {currentRun.run.cycle_month} · Status:{' '}
-                  <span className="font-medium">{currentRun.run.status}</span>
-                </p>
-              </div>
+              <div></div>
               <input
                 type="search"
                 placeholder="Search deal ID or name..."
@@ -548,6 +563,7 @@ export default function CreditReportsPage() {
               onSetBusinessFlag={handleSetBusinessFlag}
               onSetReviewDecision={handleSetReviewDecision}
             />
+          </CollapsibleSection>
           </div>
         )}
 
@@ -575,6 +591,18 @@ export default function CreditReportsPage() {
           <RunHistoryCard
             runs={runs}
             selectedRunId={currentRun?.run.id}
+            onDeleteDraft={async runId => {
+              try {
+                await creditReportAPI.deleteDraft(runId);
+                // If we deleted the currently-selected run, clear it.
+                if (currentRun?.run.id === runId) {
+                  setCurrentRun(null);
+                }
+                await loadRuns();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : 'Failed to delete draft');
+              }
+            }}
             onSelectRun={async runId => {
               try {
                 const detail = await creditReportAPI.getRun(runId);
@@ -617,7 +645,52 @@ function formatWholeDollar(value: any): string {
   return `$${n.toLocaleString('en-US')}`;
 }
 
-// ─── Subcomponents (inlined for Step 5; extracted later) ────────────────────
+/** Check a Ready row's metro2_row for blank required fields. Returns the list of field names. */
+function getBlankRequiredFields(item: RunItem): string[] {
+  if (!item.metro2_row) return [];
+  return REQUIRED_METRO2_FIELDS.filter(f => {
+    const v = item.metro2_row?.[f];
+    return v === null || v === undefined || String(v).trim() === '';
+  });
+}
+
+/** Collapsible section wrapper for the single-scroll layout. */
+function CollapsibleSection({
+  title,
+  subtitle,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="bg-card rounded-lg shadow border border-border overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-muted/30 transition-colors"
+      >
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">{title}</h2>
+          {subtitle && (
+            <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+          )}
+        </div>
+        {open ? (
+          <ChevronDown className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+        ) : (
+          <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+        )}
+      </button>
+      {open && <div className="px-6 pb-6">{children}</div>}
+    </div>
+  );
+}
+
+// ─── Subcomponents ──────────────────────────────────────────────────────────
 function defaultCycleMonth(): string {
   const d = new Date();
   d.setDate(1);
@@ -895,6 +968,7 @@ function BucketTable({
                 {n}
               </option>
             ))}
+            <option value={10000}>All</option>
           </select>
         </div>
       </div>
@@ -991,14 +1065,31 @@ function BucketRow({
 
   if (bucket === 'ready') {
     const m2 = item.metro2_row || {};
+    const blanks = getBlankRequiredFields(item);
+    const hasBlanks = blanks.length > 0;
     return (
-      <tr className="hover:bg-muted/30 transition-colors">
-        <td className="px-4 py-3 text-sm text-foreground font-mono">{dealId}</td>
+      <tr className={`transition-colors ${hasBlanks ? 'bg-amber-50/50 dark:bg-amber-900/10 hover:bg-amber-100/50' : 'hover:bg-muted/30'}`}>
+        <td className="px-4 py-3 text-sm text-foreground font-mono">
+          {hasBlanks && (
+            <span title={`Missing: ${blanks.join(', ')}`}>
+              <AlertTriangle className="w-4 h-4 text-amber-600 inline-block mr-1" />
+            </span>
+          )}
+          {dealId}
+        </td>
         <td className="px-4 py-3 text-sm text-foreground">
           {clientName}
           {item.review_decision === 'approve' && (
             <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
               Auto-applied
+            </span>
+          )}
+          {hasBlanks && (
+            <span
+              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300"
+              title={blanks.join(', ')}
+            >
+              {blanks.length} blank field{blanks.length > 1 ? 's' : ''}
             </span>
           )}
         </td>
@@ -1508,10 +1599,12 @@ function ValidationList({
 function RunHistoryCard({
   runs,
   selectedRunId,
+  onDeleteDraft,
   onSelectRun,
 }: {
   runs: RunSummary[];
   selectedRunId?: string;
+  onDeleteDraft: (runId: string) => void;
   onSelectRun: (runId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -1599,12 +1692,32 @@ function RunHistoryCard({
                         : '-'}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => onSelectRun(run.id)}
-                        className="text-xs text-blue-600 hover:text-blue-700 underline"
-                      >
-                        {isSelected ? 'Selected' : 'View'}
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => onSelectRun(run.id)}
+                          className="text-xs text-blue-600 hover:text-blue-700 underline"
+                        >
+                          {isSelected ? 'Selected' : 'View'}
+                        </button>
+                        {run.status === 'draft' && (
+                          <button
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  `Delete draft for cycle ${run.cycle_month}? This cannot be undone.`
+                                )
+                              ) {
+                                onDeleteDraft(run.id);
+                              }
+                            }}
+                            className="text-xs text-red-600 hover:text-red-700 flex items-center gap-0.5"
+                            title="Delete this draft"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

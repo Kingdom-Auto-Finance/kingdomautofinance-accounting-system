@@ -160,7 +160,7 @@ async def list_run_items(
     ),
     q: Optional[str] = Query(None, description="Substring search across deal_id and clientName"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=1, le=500),
+    page_size: int = Query(100, ge=1, le=10000),
     order_by: Optional[str] = Query(
         None,
         description=(
@@ -310,6 +310,21 @@ async def download_bucket_csv(run_id: str, bucket: str):
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Failed to render CSV: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+async def delete_draft_run(run_id: str):
+    """Delete a draft run and its associated data.
+
+    Only drafts can be deleted. Finalized and archived runs return 400.
+    """
+    try:
+        svc.delete_draft_run(run_id)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"delete_draft_run failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
