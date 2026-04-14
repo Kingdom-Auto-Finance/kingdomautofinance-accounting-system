@@ -40,7 +40,7 @@ export default function DisputesPage() {
         </select>
       </div>
 
-      <div className="border rounded bg-white p-3 text-sm">
+      <div className="border rounded bg-card p-3 text-sm">
         <div className="font-medium mb-2">Log new dispute</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <input
@@ -76,9 +76,9 @@ export default function DisputesPage() {
         </button>
       </div>
 
-      <div className="border rounded bg-white overflow-hidden">
+      <div className="border rounded bg-card overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-left">
+          <thead className="bg-muted/40 text-left">
             <tr>
               <th className="px-3 py-2">Received</th>
               <th className="px-3 py-2">Code</th>

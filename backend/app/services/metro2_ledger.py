@@ -14,7 +14,8 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
-from datetime import date
+import re
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.db.supabase_client import get_supabase_client
@@ -27,6 +28,37 @@ logger = logging.getLogger(__name__)
 EDITABLE_COLUMNS: Tuple[str, ...] = tuple(
     f.db_column for f in schema.FIELDS if f.db_column
 )
+
+# DB column → schema type. Used by _coerce_for_db to convert the all-string
+# payloads coming from CSV uploads into the typed values Postgres expects
+# (DATE, numeric, etc.). Without this every insert fails with "invalid input
+# syntax for type date" and the API silently swallows them as 'skipped'.
+_DB_COLUMN_TYPES: Dict[str, str] = {
+    f.db_column: f.field_type
+    for f in schema.FIELDS
+    if f.db_column
+}
+
+# Required-NOT-NULL DB columns. We must guarantee a value (or fall back to a
+# sensible default) before insert or Postgres will reject the row.
+_NOT_NULL_DEFAULTS: Dict[str, Any] = {
+    "consumer_account_number": None,   # truly required - no default possible
+    "subscriber_code": schema.IDENTIFICATION_NUMBER,
+    "portfolio_type": "I",
+    "account_type": "00",
+    "credit_limit": 0,
+    "highest_credit_or_orig_loan": 0,
+    "terms_frequency": "M",
+    "scheduled_payment_amt": 0,
+    "actual_payment_amt": 0,
+    "account_status": "11",
+    "current_balance": 0,
+    "amount_past_due": 0,
+    "original_chargeoff_amt": 0,
+    "ecoa_code": "1",
+    "country_code": "US",
+    "address_indicator": "C",
+}
 
 
 # ─── List / get ──────────────────────────────────────────────────────────────
@@ -89,10 +121,20 @@ def get_record_history(record_id: str,
 
 # ─── Create / update / deactivate ────────────────────────────────────────────
 def create_record(fields: Dict[str, Any],
-                  user_id: Optional[str] = None) -> Dict[str, Any]:
-    """Manually insert a new record into the ledger. Always origin='manual'."""
+                  user_id: Optional[str] = None,
+                  upsert_on_conflict: bool = False) -> Dict[str, Any]:
+    """Manually insert a new record into the ledger. Always origin='manual'.
+
+    When ``upsert_on_conflict=True`` (used by bulk uploads), an existing
+    record with the same (subscriber_code, consumer_account_number) is
+    updated instead of raising a unique-constraint error.
+    """
     sb = get_supabase_client()
     insert = _clean_payload(fields)
+
+    if not insert.get("consumer_account_number"):
+        raise ValueError("consumer_account_number is required")
+
     insert["origin"] = "manual"
     insert["is_active"] = True
     insert["created_by"] = user_id
@@ -100,6 +142,26 @@ def create_record(fields: Dict[str, Any],
 
     # Layer 2+3 validation on create.
     _stamp_validation(insert)
+
+    # If the row already exists for this subscriber+account#, optionally upsert.
+    if upsert_on_conflict:
+        existing = (
+            sb.table("metro2_records")
+            .select("id")
+            .eq("subscriber_code", insert.get("subscriber_code", schema.IDENTIFICATION_NUMBER))
+            .eq("consumer_account_number", insert["consumer_account_number"])
+            .execute()
+            .data
+        )
+        if existing:
+            update = {k: v for k, v in insert.items()
+                      if k not in ("created_by", "created_at")}
+            sb.table("metro2_records").update(update).eq(
+                "id", existing[0]["id"]
+            ).execute()
+            _log_history(existing[0]["id"], "update",
+                         note="upload re-import", user_id=user_id)
+            return get_record(existing[0]["id"])
 
     res = sb.table("metro2_records").insert(insert).execute()
     row = res.data[0] if res.data else {}
@@ -205,7 +267,7 @@ def upsert_from_cycle(cycle_run_id: str,
         by_acct[key] = r
 
     for rec in cycle_records:
-        payload = _metro2_names_to_db_columns(rec)
+        payload = _coerce_for_db(_metro2_names_to_db_columns(rec))
         acct = payload.get("consumer_account_number")
         if not acct:
             continue
@@ -247,12 +309,113 @@ def upsert_from_cycle(cycle_run_id: str,
 
 # ─── Internals ───────────────────────────────────────────────────────────────
 def _clean_payload(fields: Dict[str, Any]) -> Dict[str, Any]:
-    """Translate either-names dict into a DB-column dict, dropping unknowns."""
+    """Translate either-names dict into a DB-column dict, dropping unknowns
+    and coercing string values to the column types Postgres expects.
+    """
     out = _metro2_names_to_db_columns(fields)
-    return {k: v for k, v in out.items() if k in EDITABLE_COLUMNS or k in (
+    out = {k: v for k, v in out.items() if k in EDITABLE_COLUMNS or k in (
         "subscriber_code", "source_deal_id", "source_cycle_id",
         "origin", "is_active",
     )}
+    return _coerce_for_db(out)
+
+
+def _coerce_for_db(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert string-typed CSV values into Postgres-compatible Python types.
+
+    Necessary because uploaded CSVs contain ``"20240115"`` (Metro 2 wire
+    format) but the DB columns are typed ``DATE`` / ``numeric``. Without
+    coercion every insert fails with ``invalid input syntax for type date``.
+    """
+    out: Dict[str, Any] = {}
+    for col, raw in payload.items():
+        ftype = _DB_COLUMN_TYPES.get(col)
+
+        # Normalize "obvious blanks" first.
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            # Use the table-level default if this column is NOT NULL.
+            if col in _NOT_NULL_DEFAULTS:
+                default = _NOT_NULL_DEFAULTS[col]
+                if default is not None:
+                    out[col] = default
+                # else: drop the key so the DB DEFAULT (if any) takes over.
+            # else: leave the column unset (NULL).
+            continue
+
+        if ftype == "date":
+            iso = _to_iso_date(raw)
+            if iso:
+                out[col] = iso
+            # else: drop bogus dates so they become NULL.
+            continue
+
+        if ftype == "numeric":
+            try:
+                # Strip $, commas, whitespace.
+                s = str(raw).replace("$", "").replace(",", "").strip()
+                out[col] = float(s) if s else 0
+            except (TypeError, ValueError):
+                out[col] = _NOT_NULL_DEFAULTS.get(col, 0)
+            continue
+
+        if ftype == "ssn":
+            digits = re.sub(r"\D", "", str(raw))
+            out[col] = digits[:9] if digits else None
+            continue
+
+        if ftype == "phone":
+            digits = re.sub(r"\D", "", str(raw))
+            out[col] = digits[:10] if digits else None
+            continue
+
+        # Default: alphanumeric / boolean / unknown - pass through, but
+        # truncate to the DB column length where known.
+        s = str(raw).strip()
+        fld = next((f for f in schema.FIELDS if f.db_column == col), None)
+        if fld and len(s) > fld.length:
+            s = s[: fld.length]
+        out[col] = s
+
+    # Fill any required NOT-NULL columns the caller never sent.
+    for col, default in _NOT_NULL_DEFAULTS.items():
+        if col not in out and default is not None:
+            out[col] = default
+
+    return out
+
+
+def _to_iso_date(value: Any) -> Optional[str]:
+    """Coerce dates from any common representation to ``YYYY-MM-DD``."""
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value.isoformat()
+    s = str(value).strip()
+    if not s or s in ("0", "00000000", "nan", "None"):
+        return None
+    # Already ISO?
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s
+    # Metro 2 wire format YYYYMMDD.
+    digits = re.sub(r"\D", "", s)
+    if len(digits) == 8:
+        try:
+            return datetime.strptime(digits, "%Y%m%d").date().isoformat()
+        except ValueError:
+            pass
+    # Try a few ISO-with-time variants.
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+    ):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
 
 
 def _metro2_names_to_db_columns(rec: Dict[str, Any]) -> Dict[str, Any]:

@@ -61,8 +61,8 @@ export default function Metro2Layout({ children }: { children: React.ReactNode }
               className={
                 'flex items-center gap-2 px-3 py-2 text-sm border-b-2 -mb-px transition-colors ' +
                 (active
-                  ? 'border-blue-500 text-blue-600 font-medium'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300')
+                  ? 'border-blue-500 text-blue-600 dark:text-blue-400 font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border')
               }
             >
               <Icon className="w-4 h-4" />

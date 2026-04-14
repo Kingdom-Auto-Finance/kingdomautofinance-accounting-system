@@ -33,7 +33,7 @@ export default function TransmissionsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="border rounded bg-white p-3 text-sm">
+      <div className="border rounded bg-card p-3 text-sm">
         <div className="font-medium mb-2">Log a transmission</div>
         <p className="text-xs text-muted-foreground mb-2">
           After uploading the .txt to data-eft.experian.com, record the
@@ -79,9 +79,9 @@ export default function TransmissionsPage() {
         </button>
       </div>
 
-      <div className="border rounded bg-white overflow-hidden">
+      <div className="border rounded bg-card overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-left">
+          <thead className="bg-muted/40 text-left">
             <tr>
               <th className="px-3 py-2">When</th>
               <th className="px-3 py-2">File</th>

@@ -210,13 +210,21 @@ async def accept_upload(body: AcceptUploadRequest):
 
         inserted = 0
         skipped = 0
-        for rec in records:
+        skip_reasons: List[Dict[str, Any]] = []
+        for idx, rec in enumerate(records):
             try:
-                ledger_svc.create_record(rec)
+                ledger_svc.create_record(rec, upsert_on_conflict=True)
                 inserted += 1
             except Exception as e:
                 logger.warning("Skipped row on upload accept: %s", e)
                 skipped += 1
+                if len(skip_reasons) < 50:
+                    skip_reasons.append({
+                        "row_index": idx,
+                        "account_number": rec.get("ConsumerAccountNumber") or
+                                          rec.get("consumer_account_number"),
+                        "error": str(e),
+                    })
 
         sb.table("metro2_upload_batches").update({
             "status": "accepted",
@@ -227,6 +235,7 @@ async def accept_upload(body: AcceptUploadRequest):
             "batch_id": body.batch_id,
             "inserted": inserted,
             "skipped": skipped,
+            "skip_reasons": skip_reasons,
             "validation": report.to_dict(),
         }
     except ValueError as ve:

@@ -480,6 +480,7 @@ export const metro2API = {
       batch_id: string;
       inserted: number;
       skipped: number;
+      skip_reasons: { row_index: number; account_number?: string; error: string }[];
       validation: ValidationReportDTO;
     }>('/credit-reports/metro2/upload/accept', {
       method: 'POST',

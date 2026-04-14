@@ -43,7 +43,7 @@ export default function FilesPage() {
 
   return (
     <div className="space-y-6">
-      <section className="border rounded bg-white p-4">
+      <section className="border rounded bg-card p-4">
         <div className="font-medium mb-3 flex items-center gap-2">
           <ShieldCheck className="w-4 h-4" /> Generate Metro 2 File
         </div>
@@ -79,20 +79,20 @@ export default function FilesPage() {
           <button
             onClick={generate}
             disabled={busy}
-            className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:bg-gray-300"
+            className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:bg-muted"
           >
             {busy ? 'Generating…' : 'Generate File'}
           </button>
         </div>
         {err && (
-          <div className="mt-3 text-sm text-red-700 flex items-start gap-1">
+          <div className="mt-3 text-sm text-red-600 dark:text-red-400 flex items-start gap-1">
             <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
             {err}
           </div>
         )}
         {lastResult && (
-          <div className="mt-3 p-3 border rounded bg-green-50 text-sm">
-            <div className="flex items-center gap-2 font-medium text-green-800">
+          <div className="mt-3 p-3 border rounded bg-green-50 dark:bg-green-950/30 text-sm">
+            <div className="flex items-center gap-2 font-medium text-green-700 dark:text-green-300">
               <CheckCircle2 className="w-4 h-4" />
               {lastResult.filename} generated ({lastResult.record_count} records,{' '}
               ${Number(lastResult.total_current_balance).toLocaleString()} balance)
@@ -101,7 +101,7 @@ export default function FilesPage() {
               SHA-256: <span className="font-mono">{lastResult.sha256}</span>
             </div>
             {lastResult.validation.warning_count > 0 && (
-              <div className="text-xs text-amber-700 mt-1 flex items-center gap-1">
+              <div className="text-xs text-amber-700 dark:text-amber-300 mt-1 flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" />
                 {lastResult.validation.warning_count} warning(s) - review
                 before uploading to Experian.
@@ -113,9 +113,9 @@ export default function FilesPage() {
 
       <section>
         <div className="font-medium mb-2">Recent Files</div>
-        <div className="border rounded bg-white overflow-hidden">
+        <div className="border rounded bg-card overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-left">
+            <thead className="bg-muted/40 text-left">
               <tr>
                 <th className="px-3 py-2">Filename</th>
                 <th className="px-3 py-2">As-of</th>
@@ -147,7 +147,7 @@ export default function FilesPage() {
                   <td className="px-3 py-2">
                     <a
                       href={metro2API.downloadFileUrl(f.id)}
-                      className="inline-flex items-center gap-1 text-blue-600 hover:underline text-xs"
+                      className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline text-xs"
                     >
                       <Download className="w-3 h-3" /> Download
                     </a>
