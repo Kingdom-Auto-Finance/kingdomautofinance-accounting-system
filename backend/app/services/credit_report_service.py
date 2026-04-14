@@ -1515,6 +1515,25 @@ def finalize_run(
         ready_items=ready_items,
     )
 
+    # ── Merge ready items into the Metro 2 standing ledger ──────────
+    # New in migration 008 (native Metro 2 platform). Cycle-originated
+    # rows are refreshed; manually-edited rows are preserved.
+    try:
+        from app.services import metro2_ledger
+
+        ledger_records: List[Dict[str, Any]] = []
+        for item in ready_items:
+            row = item.get("metro2_row") or {}
+            if not row:
+                continue
+            merged = {**row, "source_deal_id": item.get("deal_id")}
+            ledger_records.append(merged)
+        if ledger_records:
+            metro2_ledger.upsert_from_cycle(run_id, ledger_records)
+    except Exception as e:
+        # Ledger sync is non-fatal for the cycle workflow; log and continue.
+        logger.warning("Metro 2 ledger upsert failed (non-fatal): %s", e)
+
     # ── Flip status + persist note ────────────────────────────────────
     now = datetime.utcnow().isoformat()
     update_payload: Dict[str, Any] = {
