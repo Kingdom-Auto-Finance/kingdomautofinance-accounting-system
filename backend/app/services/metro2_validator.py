@@ -191,6 +191,56 @@ def validate_row(row: Dict[str, Any],
         err(SEVERITY_WARNING, "BAD_STATUS_CODE", "AccountStatus",
             f"AccountStatus '{status}' is not in the Metro 2 code table")
 
+    # Status 13 (Paid in Full) MUST zero out the balance. Switch Labs flags
+    # this as a fatal because Experian rejects paid accounts that still
+    # carry a balance - the bureau treats them as inconsistent.
+    current_bal = _to_float(_get(row, "CurrentBalance", "current_balance"))
+    if status == "13" and current_bal > 0:
+        err(SEVERITY_FATAL, "PAID_BUT_HAS_BALANCE", "CurrentBalance",
+            f"AccountStatus=13 (Paid) but CurrentBalance={current_bal:.0f} - "
+            f"paid accounts must zero out")
+
+    # CurrentBalance suspiciously exceeds the original loan (data corruption
+    # or missed paydown - bureau will not reject but it's almost certainly wrong).
+    loan_amt = _to_float(_get(row, "HighestCreditOrOrigLoanAmt",
+                              "highest_credit_or_orig_loan"))
+    if loan_amt > 0 and current_bal > loan_amt * 1.05:
+        err(SEVERITY_WARNING, "BALANCE_EXCEEDS_ORIGINAL", "CurrentBalance",
+            f"CurrentBalance ({current_bal:.0f}) exceeds OriginalLoan "
+            f"({loan_amt:.0f}) by more than 5%")
+
+    # Date sanity checks. We compare yyyymmdd-prefixed strings lexicographically
+    # since they sort identically to chronological order.
+    today_yyyymmdd = date.today().strftime("%Y%m%d")
+    date_opened = _normalize_yyyymmdd(_get(row, "DateOpened", "date_opened"))
+    date_closed = _normalize_yyyymmdd(_get(row, "DateClosed", "date_closed"))
+    date_lpd = _normalize_yyyymmdd(_get(row, "DateLastPayment", "date_last_payment"))
+    date_acct = _normalize_yyyymmdd(_get(row, "DateOfAccountInfo",
+                                         "date_of_account_info"))
+
+    # No future dates on opened / last payment / as-of.
+    for label, val in (
+        ("DateOpened", date_opened),
+        ("DateLastPayment", date_lpd),
+        ("DateOfAccountInfo", date_acct),
+    ):
+        if val and val > today_yyyymmdd:
+            err(SEVERITY_FATAL, "FUTURE_DATE", label,
+                f"{label} '{val}' is in the future")
+
+    if date_opened and date_closed and date_opened > date_closed:
+        err(SEVERITY_FATAL, "OPEN_AFTER_CLOSE", "DateOpened",
+            f"DateOpened ({date_opened}) is after DateClosed ({date_closed})")
+
+    if date_lpd and date_closed and date_lpd > date_closed:
+        err(SEVERITY_FATAL, "PAYMENT_AFTER_CLOSE", "DateLastPayment",
+            f"DateLastPayment ({date_lpd}) is after DateClosed ({date_closed})")
+
+    if date_opened and date_acct and date_opened > date_acct:
+        err(SEVERITY_FATAL, "OPEN_AFTER_AS_OF", "DateOpened",
+            f"DateOpened ({date_opened}) is after DateOfAccountInfo "
+            f"({date_acct}) - account opened after the reporting cycle")
+
     # HighestCreditOrOrigLoan > 0.
     loan = _to_float(_get(row, "HighestCreditOrOrigLoanAmt", "highest_credit_or_orig_loan"))
     if loan <= 0:
@@ -299,6 +349,27 @@ def _is_blank(v: Any) -> bool:
         except (TypeError, ValueError):
             return False
     return False
+
+
+def _normalize_yyyymmdd(v: Any) -> Optional[str]:
+    """Coerce a date-ish value into a comparable YYYYMMDD string.
+
+    Returns None for blanks or unparseable values. Used by the cross-field
+    date sanity checks (future-dated, ordering) so they can compare with
+    simple lexical >, regardless of the input's original format.
+    """
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return v.strftime("%Y%m%d")
+    s = str(v).strip()
+    if not s:
+        return None
+    if re.match(r"^\d{8}$", s):
+        return s
+    if re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        return s[:10].replace("-", "")
+    return None
 
 
 def _to_float(v: Any) -> float:
