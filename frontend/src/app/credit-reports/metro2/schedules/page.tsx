@@ -4,7 +4,7 @@ import { CalendarClock } from 'lucide-react';
 
 export default function SchedulesPage() {
   return (
-    <div className="border rounded bg-white p-8 text-center">
+    <div className="border rounded bg-card p-8 text-center">
       <CalendarClock className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
       <div className="font-medium">Automated scheduling — coming soon</div>
       <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">

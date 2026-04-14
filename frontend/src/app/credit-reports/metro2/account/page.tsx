@@ -12,7 +12,7 @@ export default function AccountPage() {
   if (!data) return <div className="text-sm text-muted-foreground">Loading…</div>;
 
   return (
-    <div className="border rounded bg-white p-6 max-w-xl">
+    <div className="border rounded bg-card p-6 max-w-xl">
       <div className="font-medium mb-3">Subscriber settings</div>
       <p className="text-xs text-muted-foreground mb-4">
         Read-only in v1. Edit{' '}

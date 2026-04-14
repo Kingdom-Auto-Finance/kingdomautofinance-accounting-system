@@ -11,9 +11,9 @@ export default function FileHistoryPage() {
   }, []);
 
   return (
-    <div className="border rounded bg-white overflow-hidden">
+    <div className="border rounded bg-card overflow-hidden">
       <table className="w-full text-sm">
-        <thead className="bg-gray-50 text-left">
+        <thead className="bg-muted/40 text-left">
           <tr>
             <th className="px-3 py-2">Filename</th>
             <th className="px-3 py-2">As-of</th>
@@ -47,7 +47,7 @@ export default function FileHistoryPage() {
               <td className="px-3 py-2">
                 <a
                   href={metro2API.downloadFileUrl(f.id)}
-                  className="inline-flex items-center gap-1 text-blue-600 hover:underline text-xs"
+                  className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline text-xs"
                 >
                   <Download className="w-3 h-3" /> Download
                 </a>

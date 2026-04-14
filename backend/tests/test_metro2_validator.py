@@ -143,6 +143,64 @@ class TestLayer2Formats:
         assert "ZERO_ORIGINAL_LOAN" in _codes(findings)
 
 
+class TestLayer2BalanceAndDateLogic:
+    """Switch Labs-equivalent cross-field rules added after first prod run."""
+
+    def test_paid_status_with_balance_is_fatal(self):
+        findings = v.validate_row(_clean_row(
+            AccountStatus="13",
+            CurrentBalance=500,
+            AmountPastDue=0,
+            DateClosed="20260101",
+        ))
+        assert "PAID_BUT_HAS_BALANCE" in _codes(findings)
+
+    def test_paid_status_zero_balance_passes(self):
+        findings = v.validate_row(_clean_row(
+            AccountStatus="13",
+            CurrentBalance=0,
+            AmountPastDue=0,
+            DateClosed="20260101",
+        ))
+        assert "PAID_BUT_HAS_BALANCE" not in _codes(findings)
+
+    def test_balance_exceeds_original_loan_warning(self):
+        findings = v.validate_row(_clean_row(
+            HighestCreditOrOrigLoanAmt=10000,
+            CurrentBalance=15000,
+        ))
+        assert "BALANCE_EXCEEDS_ORIGINAL" in _codes(findings)
+
+    def test_future_date_opened_is_fatal(self):
+        findings = v.validate_row(_clean_row(DateOpened="20990101"))
+        assert "FUTURE_DATE" in _codes(findings)
+
+    def test_opened_after_closed_is_fatal(self):
+        findings = v.validate_row(_clean_row(
+            DateOpened="20250101",
+            DateClosed="20240101",
+            AccountStatus="13",
+            CurrentBalance=0,
+        ))
+        assert "OPEN_AFTER_CLOSE" in _codes(findings)
+
+    def test_payment_after_closed_is_fatal(self):
+        findings = v.validate_row(_clean_row(
+            DateLastPayment="20260201",
+            DateClosed="20260101",
+            AccountStatus="13",
+            CurrentBalance=0,
+        ))
+        assert "PAYMENT_AFTER_CLOSE" in _codes(findings)
+
+    def test_opened_after_as_of_is_fatal(self):
+        findings = v.validate_row(_clean_row(
+            DateOpened="20260601",
+            DateOfAccountInfo="20260331",
+        ))
+        assert "OPEN_AFTER_AS_OF" in _codes(findings)
+
+
 class TestLayer3Batch:
     def test_duplicate_accounts_are_fatal(self):
         r1 = _clean_row()

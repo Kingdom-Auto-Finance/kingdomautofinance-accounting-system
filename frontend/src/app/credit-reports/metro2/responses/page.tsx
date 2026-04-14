@@ -23,7 +23,7 @@ export default function ResponsesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="border rounded bg-white p-3 text-sm">
+      <div className="border rounded bg-card p-3 text-sm">
         <div className="font-medium mb-2">Upload Experian response file</div>
         <div className="flex gap-2 items-center">
           <select
@@ -57,9 +57,9 @@ export default function ResponsesPage() {
         </div>
       </div>
 
-      <div className="border rounded bg-white overflow-hidden">
+      <div className="border rounded bg-card overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-left">
+          <thead className="bg-muted/40 text-left">
             <tr>
               <th className="px-3 py-2">Received</th>
               <th className="px-3 py-2">File</th>
@@ -75,13 +75,13 @@ export default function ResponsesPage() {
                   {new Date(r.received_at).toLocaleString()}
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">{r.response_filename}</td>
-                <td className="px-3 py-2 text-green-700 text-xs">
+                <td className="px-3 py-2 text-green-700 dark:text-green-300 text-xs">
                   {r.parsed_summary?.accepted ?? '—'}
                 </td>
-                <td className="px-3 py-2 text-red-700 text-xs">
+                <td className="px-3 py-2 text-red-600 dark:text-red-400 text-xs">
                   {r.parsed_summary?.rejected ?? '—'}
                 </td>
-                <td className="px-3 py-2 text-amber-700 text-xs">
+                <td className="px-3 py-2 text-amber-700 dark:text-amber-300 text-xs">
                   {r.parsed_summary?.warnings ?? '—'}
                 </td>
               </tr>

@@ -39,9 +39,9 @@ export default function DevelopersPage() {
     <div className="space-y-6">
       <div>
         <div className="font-medium mb-2">Endpoints</div>
-        <div className="border rounded bg-white overflow-hidden text-sm">
+        <div className="border rounded bg-card overflow-hidden text-sm">
           <table className="w-full">
-            <thead className="bg-gray-50 text-left">
+            <thead className="bg-muted/40 text-left">
               <tr>
                 <th className="px-3 py-2 w-20">Method</th>
                 <th className="px-3 py-2">Path</th>
@@ -72,9 +72,9 @@ export default function DevelopersPage() {
             Metro 2 schema ({schema.counts.total} fields,{' '}
             {schema.counts.required} required)
           </div>
-          <div className="border rounded bg-white overflow-hidden text-sm">
+          <div className="border rounded bg-card overflow-hidden text-sm">
             <table className="w-full">
-              <thead className="bg-gray-50 text-left">
+              <thead className="bg-muted/40 text-left">
                 <tr>
                   <th className="px-3 py-2">Pos</th>
                   <th className="px-3 py-2">Len</th>

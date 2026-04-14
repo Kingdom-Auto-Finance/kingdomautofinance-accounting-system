@@ -15,19 +15,19 @@ import { metro2API, type Metro2Record } from '@/lib/api';
 const validationBadge = (s: string | undefined) => {
   if (s === 'clean')
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-700">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300">
         <CheckCircle2 className="w-3 h-3" /> clean
       </span>
     );
   if (s === 'warning')
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-amber-100 text-amber-700">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
         <AlertTriangle className="w-3 h-3" /> warning
       </span>
     );
   if (s === 'fatal')
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400">
         <XCircle className="w-3 h-3" /> fatal
       </span>
     );
@@ -113,7 +113,7 @@ export default function RecordsPage() {
             setPage(1);
             load();
           }}
-          className="px-3 py-1.5 text-sm border rounded hover:bg-gray-100"
+          className="px-3 py-1.5 text-sm border rounded hover:bg-muted"
         >
           Apply
         </button>
@@ -122,9 +122,9 @@ export default function RecordsPage() {
         </div>
       </div>
 
-      <div className="border rounded bg-white overflow-hidden">
+      <div className="border rounded bg-card overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-left">
+          <thead className="bg-muted/40 text-left">
             <tr>
               <th className="px-3 py-2">Account #</th>
               <th className="px-3 py-2">Consumer</th>
@@ -139,7 +139,7 @@ export default function RecordsPage() {
           </thead>
           <tbody>
             {data.map(r => (
-              <tr key={r.id} className="border-t hover:bg-gray-50">
+              <tr key={r.id} className="border-t hover:bg-muted/40">
                 <td className="px-3 py-2 font-mono text-xs">
                   {r.consumer_account_number}
                 </td>
@@ -160,8 +160,8 @@ export default function RecordsPage() {
                     className={
                       'px-1.5 py-0.5 rounded ' +
                       (r.origin === 'cycle'
-                        ? 'bg-blue-100 text-blue-700'
-                        : 'bg-purple-100 text-purple-700')
+                        ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                        : 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300')
                     }
                   >
                     {r.origin}
@@ -172,15 +172,15 @@ export default function RecordsPage() {
                 </td>
                 <td className="px-3 py-2 text-xs">
                   {r.is_active ? (
-                    <Eye className="w-4 h-4 text-green-600" />
+                    <Eye className="w-4 h-4 text-green-600 dark:text-green-400" />
                   ) : (
-                    <EyeOff className="w-4 h-4 text-gray-400" />
+                    <EyeOff className="w-4 h-4 text-muted-foreground" />
                   )}
                 </td>
                 <td className="px-3 py-2 text-right">
                   <button
                     onClick={() => setSelected(r)}
-                    className="text-blue-600 hover:underline inline-flex items-center gap-1 text-xs"
+                    className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 text-xs"
                   >
                     <Edit2 className="w-3 h-3" /> View
                   </button>
@@ -270,7 +270,7 @@ function RecordDrawer({
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-end z-40">
-      <div className="bg-white w-full sm:max-w-2xl h-full sm:h-auto sm:max-h-[92vh] overflow-auto shadow-xl">
+      <div className="bg-card w-full sm:max-w-2xl h-full sm:h-auto sm:max-h-[92vh] overflow-auto shadow-xl">
         <div className="p-4 border-b flex items-center justify-between">
           <div>
             <div className="text-xs text-muted-foreground">Account</div>
@@ -278,7 +278,7 @@ function RecordDrawer({
               {record.consumer_account_number}
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-500">
+          <button onClick={onClose} className="text-muted-foreground">
             Close
           </button>
         </div>
@@ -302,7 +302,7 @@ function RecordDrawer({
                 <div key={i}>
                   <span
                     className={
-                      f.severity === 'FATAL' ? 'text-red-700' : 'text-amber-700'
+                      f.severity === 'FATAL' ? 'text-red-600 dark:text-red-400' : 'text-amber-700 dark:text-amber-300'
                     }
                   >
                     {f.severity}
@@ -316,7 +316,7 @@ function RecordDrawer({
         <div className="p-4 border-t flex gap-2">
           <button
             disabled={busy}
-            className="px-3 py-1.5 text-sm border rounded hover:bg-gray-100"
+            className="px-3 py-1.5 text-sm border rounded hover:bg-muted"
             onClick={() => run(() => metro2API.revalidateRecord(record.id))}
           >
             Re-validate
@@ -324,7 +324,7 @@ function RecordDrawer({
           {record.is_active ? (
             <button
               disabled={busy}
-              className="px-3 py-1.5 text-sm border rounded text-red-600 hover:bg-red-50"
+              className="px-3 py-1.5 text-sm border rounded text-red-600 dark:text-red-400 hover:bg-red-50 dark:bg-red-950/30"
               onClick={() => run(() => metro2API.deactivateRecord(record.id))}
             >
               Deactivate
@@ -332,13 +332,13 @@ function RecordDrawer({
           ) : (
             <button
               disabled={busy}
-              className="px-3 py-1.5 text-sm border rounded text-green-700 hover:bg-green-50"
+              className="px-3 py-1.5 text-sm border rounded text-green-700 dark:text-green-300 hover:bg-green-50 dark:bg-green-950/30"
               onClick={() => run(() => metro2API.reactivateRecord(record.id))}
             >
               Reactivate
             </button>
           )}
-          {err && <span className="text-xs text-red-600 self-center">{err}</span>}
+          {err && <span className="text-xs text-red-600 dark:text-red-400 self-center">{err}</span>}
         </div>
         {history.length > 0 && (
           <div className="p-4 border-t">

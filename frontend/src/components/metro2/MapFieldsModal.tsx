@@ -16,6 +16,8 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Info,
   Save,
   X,
@@ -37,19 +39,65 @@ interface Props {
   suggestions: MappingSuggestion[];
   sampleRows: Record<string, string>[];
   onClose: () => void;
-  onAccepted: (result: { inserted: number; skipped: number }) => void;
+  onAccepted: (result: {
+    inserted: number;
+    skipped: number;
+    skip_reasons?: { row_index: number; account_number?: string; error: string }[];
+  }) => void;
+}
+
+interface FindingGroup {
+  code: string;
+  field: string | null;
+  severity: string;
+  count: number;
+  message: string;
+  rows: { row_index: number | null; account_number: string | null; message: string }[];
+}
+
+function groupFindings(
+  findings: ValidationReportDTO['findings'],
+): FindingGroup[] {
+  const map = new Map<string, FindingGroup>();
+  for (const f of findings) {
+    const key = `${f.severity}|${f.code}|${f.field || ''}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        code: f.code,
+        field: f.field,
+        severity: f.severity,
+        count: 0,
+        message: f.message,
+        rows: [],
+      });
+    }
+    const g = map.get(key)!;
+    g.count += 1;
+    if (g.rows.length < 100) {
+      g.rows.push({
+        row_index: f.row_index,
+        account_number: f.account_number,
+        message: f.message,
+      });
+    }
+  }
+  // Sort: fatals first, then by count descending.
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === 'FATAL' ? -1 : 1;
+    return b.count - a.count;
+  });
 }
 
 const badgeClass = (importance: string | null | undefined) => {
   switch (importance) {
     case 'required':
-      return 'bg-red-100 text-red-700 border-red-200';
+      return 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-900';
     case 'recommended':
-      return 'bg-amber-100 text-amber-700 border-amber-200';
+      return 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-900';
     case 'optional':
-      return 'bg-gray-100 text-gray-600 border-gray-200';
+      return 'bg-muted text-muted-foreground border-border';
     default:
-      return 'bg-gray-50 text-gray-500 border-gray-200';
+      return 'bg-muted/40 text-muted-foreground border-border';
   }
 };
 
@@ -117,7 +165,11 @@ export default function MapFieldsModal({
     setErr(null);
     try {
       const res = await metro2API.acceptUpload(batchId, mapping, force);
-      onAccepted({ inserted: res.inserted, skipped: res.skipped });
+      onAccepted({
+        inserted: res.inserted,
+        skipped: res.skipped,
+        skip_reasons: res.skip_reasons,
+      });
     } catch (e: any) {
       setErr(String(e.message || e));
     } finally {
@@ -169,7 +221,7 @@ export default function MapFieldsModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[92vh] flex flex-col">
+      <div className="bg-card rounded-lg shadow-xl w-full max-w-6xl max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <div>
@@ -178,7 +230,7 @@ export default function MapFieldsModal({
           </div>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-900"
+            className="text-muted-foreground hover:text-foreground"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -186,7 +238,7 @@ export default function MapFieldsModal({
         </div>
 
         {/* Live counter */}
-        <div className="px-6 py-3 bg-gray-50 border-b flex flex-wrap items-center gap-4 text-sm">
+        <div className="px-6 py-3 bg-muted/40 border-b flex flex-wrap items-center gap-4 text-sm">
           <span className="font-medium">
             {headers.length} headers detected
           </span>
@@ -198,14 +250,14 @@ export default function MapFieldsModal({
           <span
             className={
               counts.mappedRequired < counts.requiredTotal
-                ? 'text-red-600 font-medium'
-                : 'text-green-700 font-medium'
+                ? 'text-red-600 dark:text-red-400 font-medium'
+                : 'text-green-700 dark:text-green-300 font-medium'
             }
           >
             {counts.mappedRequired}/{counts.requiredTotal} required
           </span>
           {mappingCheck && !mappingCheck.is_valid && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-100 text-red-700 text-xs">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 text-xs">
               <AlertTriangle className="w-3 h-3" />
               {mappingCheck.missing_required.length} required field(s) need
               attention
@@ -214,19 +266,19 @@ export default function MapFieldsModal({
           {validation && (
             <span className="ml-auto inline-flex items-center gap-3">
               {validation.fatal_count > 0 && (
-                <span className="inline-flex items-center gap-1 text-red-700">
+                <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400">
                   <XCircle className="w-4 h-4" />
                   {validation.fatal_count} fatal
                 </span>
               )}
               {validation.warning_count > 0 && (
-                <span className="inline-flex items-center gap-1 text-amber-700">
+                <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
                   <AlertTriangle className="w-4 h-4" />
                   {validation.warning_count} warning
                 </span>
               )}
               {validation.fatal_count === 0 && validation.warning_count === 0 && (
-                <span className="inline-flex items-center gap-1 text-green-700">
+                <span className="inline-flex items-center gap-1 text-green-700 dark:text-green-300">
                   <CheckCircle2 className="w-4 h-4" /> Clean
                 </span>
               )}
@@ -235,7 +287,7 @@ export default function MapFieldsModal({
         </div>
 
         {/* Templates row */}
-        <div className="px-6 py-2 border-b bg-white flex flex-wrap gap-2 items-center text-sm">
+        <div className="px-6 py-2 border-b bg-card flex flex-wrap gap-2 items-center text-sm">
           <span className="text-muted-foreground">Templates:</span>
           {templates.length === 0 && (
             <span className="text-xs text-muted-foreground">(none saved)</span>
@@ -243,7 +295,7 @@ export default function MapFieldsModal({
           {templates.map(t => (
             <button
               key={t.id}
-              className="px-2 py-1 text-xs border rounded hover:bg-gray-100"
+              className="px-2 py-1 text-xs border rounded hover:bg-muted"
               onClick={() => loadTemplate(t)}
             >
               {t.name}
@@ -259,7 +311,7 @@ export default function MapFieldsModal({
             />
             <button
               onClick={saveTemplate}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs border rounded bg-white hover:bg-gray-100"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs border rounded bg-card hover:bg-muted"
             >
               <Save className="w-3 h-3" /> Save
             </button>
@@ -269,7 +321,7 @@ export default function MapFieldsModal({
         {/* Mapping table */}
         <div className="flex-1 overflow-auto px-6 py-4">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 sticky top-0">
+            <thead className="bg-muted/40 sticky top-0">
               <tr className="text-left">
                 <th className="py-2 pr-4 w-1/4">CSV Header</th>
                 <th className="py-2 pr-4 w-1/4">Sample Value</th>
@@ -338,7 +390,7 @@ export default function MapFieldsModal({
                             </span>
                           </div>
                           <div
-                            className="text-xs text-gray-600 flex items-start gap-1"
+                            className="text-xs text-muted-foreground flex items-start gap-1"
                             title={fld.description}
                           >
                             <Info className="w-3 h-3 mt-0.5 shrink-0" />
@@ -372,55 +424,31 @@ export default function MapFieldsModal({
           </table>
 
           {mappingCheck && mappingCheck.missing_required.length > 0 && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm">
-              <div className="font-medium text-red-800 mb-1 flex items-center gap-1">
+            <div className="mt-4 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded text-sm">
+              <div className="font-medium text-red-700 dark:text-red-300 mb-1 flex items-center gap-1">
                 <AlertTriangle className="w-4 h-4" />
                 {mappingCheck.missing_required.length} required fields
                 unmapped
               </div>
-              <div className="text-xs text-red-700">
+              <div className="text-xs text-red-600 dark:text-red-400">
                 {mappingCheck.missing_required.join(', ')}
               </div>
             </div>
           )}
 
           {validation && validation.findings.length > 0 && (
-            <div className="mt-4 border rounded">
-              <div className="px-3 py-2 bg-gray-50 border-b text-xs font-medium">
-                Row-level validation ({validation.findings.length} finding(s))
-              </div>
-              <div className="max-h-48 overflow-auto text-xs">
-                {validation.findings.slice(0, 100).map((f, i) => (
-                  <div
-                    key={i}
-                    className={
-                      'px-3 py-1.5 border-b last:border-b-0 flex gap-3 ' +
-                      (f.severity === 'FATAL' ? 'bg-red-50' : 'bg-amber-50')
-                    }
-                  >
-                    <span className="font-mono shrink-0">
-                      {f.severity === 'FATAL' ? '✕' : '!'}
-                    </span>
-                    <span className="font-mono text-muted-foreground shrink-0">
-                      {f.row_index != null ? `#${f.row_index + 1}` : ''}
-                    </span>
-                    <span className="font-mono shrink-0">{f.code}</span>
-                    <span>{f.message}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <ValidationGroups findings={validation.findings} />
           )}
         </div>
 
         {/* Footer / actions */}
-        <div className="px-6 py-3 border-t bg-gray-50 flex items-center justify-between">
-          <div className="text-xs text-red-600">{err}</div>
+        <div className="px-6 py-3 border-t bg-muted/40 flex items-center justify-between">
+          <div className="text-xs text-red-600 dark:text-red-400">{err}</div>
           <div className="flex gap-2">
             <button
               onClick={runValidation}
               disabled={busy}
-              className="px-3 py-1.5 text-sm border rounded bg-white hover:bg-gray-100"
+              className="px-3 py-1.5 text-sm border rounded bg-card hover:bg-muted"
             >
               {busy ? 'Validating…' : 'Run Validation'}
             </button>
@@ -431,7 +459,7 @@ export default function MapFieldsModal({
                 'px-4 py-1.5 text-sm rounded text-white ' +
                 (canProcess
                   ? 'bg-blue-600 hover:bg-blue-700'
-                  : 'bg-gray-300 cursor-not-allowed')
+                  : 'bg-muted cursor-not-allowed')
               }
             >
               Process
@@ -440,13 +468,115 @@ export default function MapFieldsModal({
               <button
                 onClick={() => process(true)}
                 disabled={busy}
-                className="px-3 py-1.5 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50"
+                className="px-3 py-1.5 text-sm rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
               >
                 Force Process ({validation.fatal_count} fatal)
               </button>
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Grouped validation findings ─────────────────────────────────────────────
+function ValidationGroups({
+  findings,
+}: {
+  findings: ValidationReportDTO['findings'];
+}) {
+  const groups = useMemo(() => groupFindings(findings), [findings]);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+
+  const total = findings.length;
+  const fatals = groups.filter(g => g.severity === 'FATAL');
+  const warns = groups.filter(g => g.severity !== 'FATAL');
+
+  return (
+    <div className="mt-4 border border-border rounded">
+      <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-medium flex items-center gap-3">
+        <span>
+          Row-level validation — {total} finding{total === 1 ? '' : 's'} across{' '}
+          {groups.length} group{groups.length === 1 ? '' : 's'}
+        </span>
+        {fatals.length > 0 && (
+          <span className="text-red-600 dark:text-red-400">
+            {fatals.reduce((n, g) => n + g.count, 0)} fatal
+          </span>
+        )}
+        {warns.length > 0 && (
+          <span className="text-amber-700 dark:text-amber-400">
+            {warns.reduce((n, g) => n + g.count, 0)} warning
+          </span>
+        )}
+      </div>
+      <div className="max-h-72 overflow-auto">
+        {groups.map(g => {
+          const key = `${g.severity}|${g.code}|${g.field || ''}`;
+          const open = openKey === key;
+          return (
+            <div key={key} className="border-b border-border last:border-b-0">
+              <button
+                onClick={() => setOpenKey(open ? null : key)}
+                className={
+                  'w-full flex items-center gap-3 px-3 py-2 text-left text-xs hover:bg-muted/30 ' +
+                  (g.severity === 'FATAL'
+                    ? 'bg-red-50 dark:bg-red-950/20'
+                    : 'bg-amber-50 dark:bg-amber-950/20')
+                }
+              >
+                {open ? (
+                  <ChevronDown className="w-3 h-3 shrink-0" />
+                ) : (
+                  <ChevronRight className="w-3 h-3 shrink-0" />
+                )}
+                <span
+                  className={
+                    'font-mono shrink-0 w-12 ' +
+                    (g.severity === 'FATAL'
+                      ? 'text-red-700 dark:text-red-400'
+                      : 'text-amber-700 dark:text-amber-400')
+                  }
+                >
+                  {g.severity === 'FATAL' ? 'FATAL' : 'WARN'}
+                </span>
+                <span className="font-mono shrink-0 w-44 truncate">
+                  {g.code}
+                  {g.field && (
+                    <span className="text-muted-foreground"> · {g.field}</span>
+                  )}
+                </span>
+                <span className="flex-1 text-foreground truncate">
+                  {g.message}
+                </span>
+                <span className="shrink-0 px-1.5 py-0.5 rounded bg-muted text-foreground font-medium">
+                  {g.count}×
+                </span>
+              </button>
+              {open && (
+                <div className="bg-background px-3 py-2 text-xs space-y-1 max-h-48 overflow-auto">
+                  {g.rows.map((r, i) => (
+                    <div key={i} className="flex gap-3 text-muted-foreground">
+                      <span className="font-mono w-12">
+                        {r.row_index != null ? `#${r.row_index + 1}` : '—'}
+                      </span>
+                      <span className="font-mono w-32 truncate">
+                        {r.account_number || '—'}
+                      </span>
+                      <span className="flex-1 truncate">{r.message}</span>
+                    </div>
+                  ))}
+                  {g.count > g.rows.length && (
+                    <div className="text-muted-foreground italic">
+                      …and {g.count - g.rows.length} more
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -12,7 +12,7 @@ export default function AnalyticsPage() {
   if (!data) return <div className="text-sm text-muted-foreground">Loading…</div>;
 
   const Card = ({ label, value }: { label: string; value: any }) => (
-    <div className="border rounded p-4 bg-white">
+    <div className="border rounded p-4 bg-card">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="text-2xl font-semibold mt-1">{value}</div>
     </div>
@@ -21,13 +21,13 @@ export default function AnalyticsPage() {
   const Dist = ({ title, rows }: { title: string; rows: Record<string, number> }) => {
     const total = Object.values(rows).reduce((a, b) => a + b, 0) || 1;
     return (
-      <div className="border rounded p-4 bg-white">
+      <div className="border rounded p-4 bg-card">
         <div className="font-medium mb-2">{title}</div>
         <div className="space-y-1 text-sm">
           {Object.entries(rows).map(([k, v]) => (
             <div key={k} className="flex items-center gap-2">
               <div className="w-24 text-xs font-mono">{k}</div>
-              <div className="flex-1 bg-gray-100 rounded h-2">
+              <div className="flex-1 bg-muted rounded h-2">
                 <div
                   className="bg-blue-500 h-2 rounded"
                   style={{ width: `${(v / total) * 100}%` }}
@@ -62,7 +62,7 @@ export default function AnalyticsPage() {
       </div>
 
       {data.recent_files?.length > 0 && (
-        <div className="border rounded p-4 bg-white">
+        <div className="border rounded p-4 bg-card">
           <div className="font-medium mb-2">Recent files</div>
           <table className="w-full text-sm">
             <thead className="text-xs text-muted-foreground">
