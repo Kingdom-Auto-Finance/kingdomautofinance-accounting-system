@@ -436,6 +436,13 @@ export default function CreditReportsPage() {
               Monthly Metro 2 / Experian reporting workflow.
             </p>
           </div>
+          <a
+            href="/credit-reports/metro2"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 shadow"
+          >
+            <FileText className="w-4 h-4" />
+            Open Metro 2 Platform
+          </a>
         </div>
 
         {/* ── Error banner ────────────────────────────────────────── */}

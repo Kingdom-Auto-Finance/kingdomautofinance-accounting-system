@@ -363,6 +363,296 @@ export const creditReportAPI = {
     }>('/credit-reports/rules'),
 };
 
+// ─── Metro 2 native platform API (Switch Labs parity) ────────────────────────
+export interface Metro2Field {
+  name: string;
+  label: string;
+  position: number;
+  length: number;
+  type: string;
+  importance: 'required' | 'recommended' | 'optional';
+  description: string;
+  format: string;
+  sample: string;
+  db_column: string | null;
+  allowed_values: string[] | null;
+}
+
+export interface Metro2Schema {
+  fields: Metro2Field[];
+  counts: { total: number; required: number; recommended: number; optional: number };
+  config: Record<string, any>;
+  status_rules: Record<string, string[]>;
+}
+
+export interface Metro2Record {
+  id: string;
+  subscriber_code: string;
+  consumer_account_number: string;
+  surname?: string;
+  first_name?: string;
+  account_status?: string;
+  current_balance?: number;
+  amount_past_due?: number;
+  origin: 'cycle' | 'manual';
+  is_active: boolean;
+  last_validated_at?: string;
+  last_validated_status?: 'clean' | 'warning' | 'fatal';
+  last_validation_issues?: any[];
+  [key: string]: any;
+}
+
+export interface MappingSuggestion {
+  source_column: string;
+  suggested_field: string | null;
+  confidence: number;
+  sample_values: string[];
+  importance: 'required' | 'recommended' | 'optional' | null;
+}
+
+export interface MappingCheck {
+  total_required: number;
+  mapped_required: number;
+  missing_required: string[];
+  total_recommended: number;
+  mapped_recommended: number;
+  missing_recommended: string[];
+  is_valid: boolean;
+}
+
+export interface ValidationReportDTO {
+  status: 'clean' | 'warning' | 'fatal';
+  fatal_count: number;
+  warning_count: number;
+  findings: {
+    severity: string;
+    code: string;
+    field: string | null;
+    message: string;
+    row_index: number | null;
+    account_number: string | null;
+  }[];
+}
+
+export interface Metro2FileRow {
+  id: string;
+  filename: string;
+  as_of_date: string;
+  record_count: number;
+  total_current_balance: number;
+  total_past_due: number;
+  sha256: string;
+  size_bytes: number;
+  generated_at: string;
+}
+
+export const metro2API = {
+  // Schema / Account
+  getSchema: () => fetchAPI<Metro2Schema>('/credit-reports/metro2/schema'),
+  getAccount: () =>
+    fetchAPI<Record<string, any>>('/credit-reports/metro2/account'),
+
+  // File Upload
+  uploadFile: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${API_V1}/credit-reports/metro2/upload`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json() as Promise<{
+      batch_id: string;
+      filename: string;
+      row_count: number;
+      headers: string[];
+      suggestions: MappingSuggestion[];
+      sample_rows: Record<string, string>[];
+    }>;
+  },
+  validateMapping: (batch_id: string, mapping: Record<string, string>) =>
+    fetchAPI<{ mapping: MappingCheck; validation: ValidationReportDTO }>(
+      '/credit-reports/metro2/upload/validate',
+      { method: 'POST', body: { batch_id, mapping } },
+    ),
+  acceptUpload: (batch_id: string, mapping: Record<string, string>, force = false) =>
+    fetchAPI<{
+      batch_id: string;
+      inserted: number;
+      skipped: number;
+      validation: ValidationReportDTO;
+    }>('/credit-reports/metro2/upload/accept', {
+      method: 'POST',
+      body: { batch_id, mapping, force },
+    }),
+
+  // Mapping templates
+  listMappingTemplates: () =>
+    fetchAPI<{ data: any[] }>('/credit-reports/metro2/mapping-templates'),
+  saveMappingTemplate: (body: {
+    name: string;
+    mapping: Record<string, string>;
+    description?: string;
+    is_default?: boolean;
+  }) =>
+    fetchAPI<any>('/credit-reports/metro2/mapping-templates', {
+      method: 'POST',
+      body,
+    }),
+  deleteMappingTemplate: (id: string) =>
+    fetchAPI<any>(`/credit-reports/metro2/mapping-templates/${id}`, {
+      method: 'DELETE',
+    }),
+
+  // Records
+  listRecords: (params: {
+    origin?: string;
+    status?: string;
+    validation_status?: string;
+    q?: string;
+    only_active?: boolean;
+    page?: number;
+    page_size?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') qs.append(k, String(v));
+    });
+    return fetchAPI<{
+      data: Metro2Record[];
+      page: number;
+      page_size: number;
+      total: number;
+    }>(`/credit-reports/metro2/records?${qs.toString()}`);
+  },
+  getRecord: (id: string) =>
+    fetchAPI<Metro2Record>(`/credit-reports/metro2/records/${id}`),
+  getRecordHistory: (id: string) =>
+    fetchAPI<{ data: any[] }>(`/credit-reports/metro2/records/${id}/history`),
+  createRecord: (fields: Record<string, any>) =>
+    fetchAPI<Metro2Record>('/credit-reports/metro2/records', {
+      method: 'POST',
+      body: { fields },
+    }),
+  updateRecord: (id: string, fields: Record<string, any>, note?: string) =>
+    fetchAPI<Metro2Record>(`/credit-reports/metro2/records/${id}`, {
+      method: 'PATCH',
+      body: { fields, note },
+    }),
+  deactivateRecord: (id: string) =>
+    fetchAPI<Metro2Record>(
+      `/credit-reports/metro2/records/${id}/deactivate`,
+      { method: 'POST' },
+    ),
+  reactivateRecord: (id: string) =>
+    fetchAPI<Metro2Record>(
+      `/credit-reports/metro2/records/${id}/reactivate`,
+      { method: 'POST' },
+    ),
+  revalidateRecord: (id: string) =>
+    fetchAPI<Metro2Record>(
+      `/credit-reports/metro2/records/${id}/revalidate`,
+      { method: 'POST' },
+    ),
+
+  // Analytics
+  getAnalytics: () =>
+    fetchAPI<{
+      total_records: number;
+      total_balance: number;
+      total_past_due: number;
+      status_distribution: Record<string, number>;
+      origin_distribution: Record<string, number>;
+      validation_distribution: Record<string, number>;
+      recent_files: Metro2FileRow[];
+    }>('/credit-reports/metro2/analytics'),
+
+  // Files
+  generateFile: (body: {
+    as_of_date?: string;
+    record_ids?: string[];
+    force?: boolean;
+    enforce_minimum?: boolean;
+  } = {}) =>
+    fetchAPI<{
+      file_id: string;
+      filename: string;
+      storage_path: string;
+      sha256: string;
+      size_bytes: number;
+      as_of_date: string;
+      record_count: number;
+      total_current_balance: number;
+      total_past_due: number;
+      status_11_count: number;
+      validation: ValidationReportDTO;
+    }>('/credit-reports/metro2/files/generate', { method: 'POST', body }),
+  listFiles: (limit = 50) =>
+    fetchAPI<{ data: Metro2FileRow[] }>(
+      `/credit-reports/metro2/files?limit=${limit}`,
+    ),
+  getFile: (id: string) =>
+    fetchAPI<any>(`/credit-reports/metro2/files/${id}`),
+  downloadFileUrl: (id: string) =>
+    `${API_V1}/credit-reports/metro2/files/${id}/download`,
+
+  // Transmissions
+  listTransmissions: () =>
+    fetchAPI<{ data: any[] }>('/credit-reports/metro2/transmissions'),
+  logTransmission: (body: {
+    file_id: string;
+    transmitted_at: string;
+    confirmation_ref?: string;
+    notes?: string;
+  }) =>
+    fetchAPI<any>('/credit-reports/metro2/transmissions', {
+      method: 'POST',
+      body,
+    }),
+
+  // Responses
+  listResponses: () =>
+    fetchAPI<{ data: any[] }>('/credit-reports/metro2/responses'),
+  uploadResponse: async (file: File, transmission_id?: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (transmission_id) form.append('transmission_id', transmission_id);
+    const res = await fetch(
+      `${API_V1}/credit-reports/metro2/responses/upload`,
+      { method: 'POST', body: form },
+    );
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  // Disputes
+  listDisputes: (status?: string) => {
+    const qs = status ? `?status=${status}` : '';
+    return fetchAPI<{ data: any[] }>(`/credit-reports/metro2/disputes${qs}`);
+  },
+  createDispute: (body: {
+    record_id?: string;
+    dispute_code?: string;
+    received_at: string;
+    notes?: string;
+  }) =>
+    fetchAPI<any>('/credit-reports/metro2/disputes', {
+      method: 'POST',
+      body,
+    }),
+  updateDispute: (id: string, body: Record<string, any>) =>
+    fetchAPI<any>(`/credit-reports/metro2/disputes/${id}`, {
+      method: 'PATCH',
+      body,
+    }),
+
+  // Schedules (v1 placeholder)
+  getSchedules: () =>
+    fetchAPI<{ enabled: boolean; message: string }>(
+      '/credit-reports/metro2/schedules',
+    ),
+};
+
 // Health check
 export const healthCheck = () =>
   fetch(`${API_URL}/health`).then(res => res.json());
@@ -376,5 +666,6 @@ export default {
   auditAPI,
   settingsAPI,
   creditReportAPI,
+  metro2API,
   healthCheck,
 };

@@ -47,7 +47,7 @@ async def health_check():
 
 
 # Include API routers
-from app.api import payments, reports, amortization, jobs, settings as settings_api, audit, credit_reports
+from app.api import payments, reports, amortization, jobs, settings as settings_api, audit, credit_reports, metro2
 
 app.include_router(
     payments.router,
@@ -89,4 +89,10 @@ app.include_router(
     credit_reports.router,
     prefix=f"{settings.API_V1_PREFIX}/credit-reports",
     tags=["credit-reports"]
+)
+
+app.include_router(
+    metro2.router,
+    prefix=f"{settings.API_V1_PREFIX}/credit-reports/metro2",
+    tags=["metro2"]
 )
